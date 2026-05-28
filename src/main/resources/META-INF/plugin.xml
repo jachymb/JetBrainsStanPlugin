@@ -1,0 +1,47 @@
+<idea-plugin>
+    <id>org.intellij.stan</id>
+    <name>Stan Language Support</name>
+    <vendor>Community</vendor>
+    <description><![CDATA[
+        Syntax highlighting support for the Stan statistical modeling language.<br/>
+        Stan is a probabilistic programming language for Bayesian statistical inference,
+        full Bayesian statistical inference with MCMC sampling, approximate Bayesian
+        inference with variational inference, and penalized maximum likelihood estimation.<br/><br/>
+        Features:
+        <ul>
+            <li>Syntax highlighting for keywords, types, built-in functions, and distributions</li>
+            <li>Comment highlighting (// and /* */ and # styles)</li>
+            <li>Number and string literal highlighting</li>
+            <li>Customizable colors via Settings → Editor → Color Scheme → Stan</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <actions>
+        <action id="Stan.NewFile"
+                class="org.intellij.stan.StanCreateFileAction"
+                text="Stan File"
+                description="Create a new Stan model file">
+            <add-to-group group-id="NewGroup" anchor="after" relative-to-action="NewFile"/>
+        </action>
+    </actions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <internalFileTemplate name="Stan File"/>
+
+        <fileType
+            name="Stan"
+            implementationClass="org.intellij.stan.StanFileType"
+            fieldName="INSTANCE"
+            language="Stan"
+            extensions="stan"/>
+
+        <lang.syntaxHighlighterFactory
+            language="Stan"
+            implementationClass="org.intellij.stan.StanSyntaxHighlighterFactory"/>
+
+        <colorSettingsPage
+            implementation="org.intellij.stan.StanColorSettingsPage"/>
+    </extensions>
+</idea-plugin>
