@@ -70,7 +70,7 @@ public class StanCreateFileAction extends DumbAwareAction {
                             int target = (newline >= 0) ? newline + 1 : brace + 1;
 
                             CommonCodeStyleSettings.IndentOptions opts =
-                                    CodeStyleSettingsManager.getSettings(project).getIndentOptions(StanFileType.INSTANCE);
+                                    CodeStyleSettingsManager.getInstance(project).getCurrentSettings().getIndentOptions(StanFileType.INSTANCE);
                             String indent = opts.USE_TAB_CHARACTER ? "\t" : " ".repeat(opts.INDENT_SIZE);
 
                             WriteCommandAction.runWriteCommandAction(project, () ->

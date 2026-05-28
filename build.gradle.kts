@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij") version "1.17.4"
 }
 
-group = "org.intellij.stan"
+group = "org.mc-stan.stan"
 version = "1.0.0"
 
 repositories {
@@ -26,6 +26,10 @@ tasks {
     patchPluginXml {
         sinceBuild.set("241")
         untilBuild.set("251.*")
+    }
+
+    buildSearchableOptions {
+        enabled = false
     }
 
     signPlugin {
