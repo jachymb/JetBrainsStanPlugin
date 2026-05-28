@@ -1,9 +1,9 @@
-
 package org.intellij.stan;
 
 import com.intellij.lexer.Lexer;
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors;
 import com.intellij.openapi.editor.HighlighterColors;
+import com.intellij.openapi.editor.colors.CodeInsightColors;
 import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.fileTypes.SyntaxHighlighterBase;
 import com.intellij.psi.TokenType;
@@ -15,35 +15,37 @@ import static com.intellij.openapi.editor.colors.TextAttributesKey.createTextAtt
 public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
 
     public static final TextAttributesKey KEYWORD =
-        createTextAttributesKey("STAN_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD);
+        createTextAttributesKey("STAN_KEYWORD",        DefaultLanguageHighlighterColors.KEYWORD);
     public static final TextAttributesKey BLOCK_KEYWORD =
-        createTextAttributesKey("STAN_BLOCK_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD);
+        createTextAttributesKey("STAN_BLOCK_KEYWORD",  DefaultLanguageHighlighterColors.KEYWORD);
     public static final TextAttributesKey TYPE =
-        createTextAttributesKey("STAN_TYPE", DefaultLanguageHighlighterColors.KEYWORD);
+        createTextAttributesKey("STAN_TYPE",           DefaultLanguageHighlighterColors.CLASS_REFERENCE);
     public static final TextAttributesKey BUILTIN_FUNCTION =
-        createTextAttributesKey("STAN_BUILTIN_FUNCTION", DefaultLanguageHighlighterColors.FUNCTION_CALL);
+        createTextAttributesKey("STAN_BUILTIN_FUNCTION", DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL);
     public static final TextAttributesKey NUMBER =
-        createTextAttributesKey("STAN_NUMBER", DefaultLanguageHighlighterColors.NUMBER);
+        createTextAttributesKey("STAN_NUMBER",         DefaultLanguageHighlighterColors.NUMBER);
     public static final TextAttributesKey STRING =
-        createTextAttributesKey("STAN_STRING", DefaultLanguageHighlighterColors.STRING);
+        createTextAttributesKey("STAN_STRING",         DefaultLanguageHighlighterColors.STRING);
     public static final TextAttributesKey LINE_COMMENT =
-        createTextAttributesKey("STAN_LINE_COMMENT", DefaultLanguageHighlighterColors.LINE_COMMENT);
+        createTextAttributesKey("STAN_LINE_COMMENT",   DefaultLanguageHighlighterColors.LINE_COMMENT);
     public static final TextAttributesKey BLOCK_COMMENT =
-        createTextAttributesKey("STAN_BLOCK_COMMENT", DefaultLanguageHighlighterColors.BLOCK_COMMENT);
+        createTextAttributesKey("STAN_BLOCK_COMMENT",  DefaultLanguageHighlighterColors.BLOCK_COMMENT);
     public static final TextAttributesKey OPERATOR =
-        createTextAttributesKey("STAN_OPERATOR", DefaultLanguageHighlighterColors.KEYWORD);
+        createTextAttributesKey("STAN_OPERATOR",       DefaultLanguageHighlighterColors.OPERATION_SIGN);
     public static final TextAttributesKey BRACES =
-        createTextAttributesKey("STAN_BRACES", DefaultLanguageHighlighterColors.BRACES);
+        createTextAttributesKey("STAN_BRACES",         DefaultLanguageHighlighterColors.BRACES);
     public static final TextAttributesKey BRACKETS =
-        createTextAttributesKey("STAN_BRACKETS", DefaultLanguageHighlighterColors.BRACKETS);
+        createTextAttributesKey("STAN_BRACKETS",       DefaultLanguageHighlighterColors.BRACKETS);
     public static final TextAttributesKey PARENTHESES =
-        createTextAttributesKey("STAN_PARENTHESES", DefaultLanguageHighlighterColors.PARENTHESES);
+        createTextAttributesKey("STAN_PARENTHESES",    DefaultLanguageHighlighterColors.PARENTHESES);
     public static final TextAttributesKey SEMICOLON =
-        createTextAttributesKey("STAN_SEMICOLON", DefaultLanguageHighlighterColors.SEMICOLON);
+        createTextAttributesKey("STAN_SEMICOLON",      DefaultLanguageHighlighterColors.SEMICOLON);
     public static final TextAttributesKey COMMA =
-        createTextAttributesKey("STAN_COMMA", DefaultLanguageHighlighterColors.COMMA);
+        createTextAttributesKey("STAN_COMMA",          DefaultLanguageHighlighterColors.COMMA);
+    public static final TextAttributesKey RESERVED =
+        createTextAttributesKey("STAN_RESERVED",       CodeInsightColors.WARNINGS_ATTRIBUTES);
     public static final TextAttributesKey BAD_CHARACTER =
-        createTextAttributesKey("STAN_BAD_CHARACTER", HighlighterColors.BAD_CHARACTER);
+        createTextAttributesKey("STAN_BAD_CHARACTER",  HighlighterColors.BAD_CHARACTER);
 
     private static final TextAttributesKey[] KEYWORD_KEYS       = {KEYWORD};
     private static final TextAttributesKey[] BLOCK_KEYWORD_KEYS = {BLOCK_KEYWORD};
@@ -59,6 +61,7 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
     private static final TextAttributesKey[] PARENS_KEYS        = {PARENTHESES};
     private static final TextAttributesKey[] SEMICOLON_KEYS     = {SEMICOLON};
     private static final TextAttributesKey[] COMMA_KEYS         = {COMMA};
+    private static final TextAttributesKey[] RESERVED_KEYS      = {RESERVED};
     private static final TextAttributesKey[] BAD_CHAR_KEYS      = {BAD_CHARACTER};
     private static final TextAttributesKey[] EMPTY_KEYS         = {};
 
@@ -69,25 +72,44 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
     }
 
     @Override
-    public TextAttributesKey @NotNull [] getTokenHighlights(IElementType tokenType) {
-        if (tokenType.equals(StanTokenTypes.KEYWORD))          return KEYWORD_KEYS;
-        if (tokenType.equals(StanTokenTypes.BLOCK_KEYWORD))    return BLOCK_KEYWORD_KEYS;
-        if (tokenType.equals(StanTokenTypes.TYPE))             return TYPE_KEYS;
-        if (tokenType.equals(StanTokenTypes.BUILTIN_FUNCTION)) return BUILTIN_KEYS;
-        if (tokenType.equals(StanTokenTypes.NUMBER))           return NUMBER_KEYS;
-        if (tokenType.equals(StanTokenTypes.STRING))           return STRING_KEYS;
-        if (tokenType.equals(StanTokenTypes.LINE_COMMENT))     return LINE_COMMENT_KEYS;
-        if (tokenType.equals(StanTokenTypes.BLOCK_COMMENT))    return BLOCK_COMMENT_KEYS;
-        if (tokenType.equals(StanTokenTypes.OPERATOR))         return OPERATOR_KEYS;
-        if (tokenType.equals(StanTokenTypes.LBRACE)
-         || tokenType.equals(StanTokenTypes.RBRACE))           return BRACES_KEYS;
-        if (tokenType.equals(StanTokenTypes.LBRACKET)
-         || tokenType.equals(StanTokenTypes.RBRACKET))         return BRACKETS_KEYS;
-        if (tokenType.equals(StanTokenTypes.LPAREN)
-         || tokenType.equals(StanTokenTypes.RPAREN))           return PARENS_KEYS;
-        if (tokenType.equals(StanTokenTypes.SEMICOLON))        return SEMICOLON_KEYS;
-        if (tokenType.equals(StanTokenTypes.COMMA))            return COMMA_KEYS;
-        if (tokenType.equals(TokenType.BAD_CHARACTER))         return BAD_CHAR_KEYS;
+    public TextAttributesKey @NotNull [] getTokenHighlights(IElementType t) {
+        // ---- Control-flow keywords ----
+        if (StanTokenTypes.KEYWORDS.contains(t))            return KEYWORD_KEYS;
+
+        // ---- Block keywords ----
+        if (StanTokenTypes.BLOCK_KEYWORDS.contains(t))      return BLOCK_KEYWORD_KEYS;
+
+        // ---- Type keywords (primitive + constrained + constraint sub-keywords) ----
+        if (StanTokenTypes.TYPE_KEYWORDS.contains(t))       return TYPE_KEYS;
+        if (StanTokenTypes.CONSTRAINT_KEYWORDS.contains(t)) return TYPE_KEYS;
+
+        // ---- Identifiers ----
+        if (t == StanTokenTypes.BUILTIN_FUNCTION)           return BUILTIN_KEYS;
+        if (t == StanTokenTypes.RESERVED)                   return RESERVED_KEYS;
+
+        // ---- Literals ----
+        if (StanTokenTypes.NUMBER_LITERALS.contains(t))     return NUMBER_KEYS;
+        if (t == StanTokenTypes.STRING_LITERAL)             return STRING_KEYS;
+
+        // ---- Comments ----
+        if (t == StanTokenTypes.LINE_COMMENT)               return LINE_COMMENT_KEYS;
+        if (t == StanTokenTypes.BLOCK_COMMENT)              return BLOCK_COMMENT_KEYS;
+
+        // ---- Operators (all individual operator tokens share one colour slot) ----
+        if (StanTokenTypes.ALL_OPERATORS.contains(t))       return OPERATOR_KEYS;
+        // DOT is used for tuple projection — treat as operator
+        if (t == StanTokenTypes.DOT)                        return OPERATOR_KEYS;
+
+        // ---- Punctuation ----
+        if (t == StanTokenTypes.LBRACE  || t == StanTokenTypes.RBRACE)   return BRACES_KEYS;
+        if (t == StanTokenTypes.LBRACKET || t == StanTokenTypes.RBRACKET) return BRACKETS_KEYS;
+        if (t == StanTokenTypes.LPAREN  || t == StanTokenTypes.RPAREN)   return PARENS_KEYS;
+        if (t == StanTokenTypes.SEMICOLON)                  return SEMICOLON_KEYS;
+        if (t == StanTokenTypes.COMMA)                      return COMMA_KEYS;
+
+        // ---- Errors ----
+        if (t == TokenType.BAD_CHARACTER)                   return BAD_CHAR_KEYS;
+
         return EMPTY_KEYS;
     }
 }

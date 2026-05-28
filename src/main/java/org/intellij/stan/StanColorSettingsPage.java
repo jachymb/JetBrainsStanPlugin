@@ -28,6 +28,7 @@ public class StanColorSettingsPage implements ColorSettingsPage {
         new AttributesDescriptor("Parentheses",                  StanSyntaxHighlighter.PARENTHESES),
         new AttributesDescriptor("Semicolon",                    StanSyntaxHighlighter.SEMICOLON),
         new AttributesDescriptor("Comma",                        StanSyntaxHighlighter.COMMA),
+        new AttributesDescriptor("Reserved word",                StanSyntaxHighlighter.RESERVED),
     };
 
     @Nullable

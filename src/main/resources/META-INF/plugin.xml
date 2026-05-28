@@ -35,11 +35,47 @@
             language="Stan"
             extensions="stan"/>
 
+        <lang.parserDefinition
+            language="Stan"
+            implementationClass="org.intellij.stan.StanParserDefinition"/>
+
         <lang.syntaxHighlighterFactory
             language="Stan"
             implementationClass="org.intellij.stan.StanSyntaxHighlighterFactory"/>
 
         <colorSettingsPage
             implementation="org.intellij.stan.StanColorSettingsPage"/>
+
+        <localInspection
+            language="Stan"
+            displayName="Reserved word used as identifier"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanReservedWordAnnotator"
+            enabledByDefault="true"
+            level="ERROR"/>
+
+        <localInspection
+            language="Stan"
+            displayName="Consecutive unary operators"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanConsecutiveUnaryInspection"
+            enabledByDefault="true"
+            level="WARNING"/>
+
+        <localInspection
+            language="Stan"
+            displayName="Undeclared variable"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanUndeclaredVariableInspection"
+            enabledByDefault="true"
+            level="ERROR"/>
+
+        <localInspection
+            language="Stan"
+            displayName="Unused variable"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanUnusedVariableInspection"
+            enabledByDefault="true"
+            level="WARNING"/>
     </extensions>
 </idea-plugin>
