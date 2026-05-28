@@ -1,5 +1,5 @@
 <idea-plugin>
-    <id>org.intellij.stan</id>
+    <id>org.mc-stan.stan</id>
     <name>Stan Language Support</name>
     <vendor>Community</vendor>
     <description><![CDATA[
@@ -28,8 +28,6 @@
     </actions>
 
     <extensions defaultExtensionNs="com.intellij">
-        <internalFileTemplate name="Stan File"/>
-
         <fileType
             name="Stan"
             implementationClass="org.intellij.stan.StanFileType"

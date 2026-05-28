@@ -1,0 +1,10 @@
+private*.pem
+chain.crt
+token.txt
+runIde.log
+gradle/wrapper/gradle-wrapper.jar
+
+build/
+.idea/
+
+CLAUDE.md

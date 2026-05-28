@@ -19,9 +19,9 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
     public static final TextAttributesKey BLOCK_KEYWORD =
         createTextAttributesKey("STAN_BLOCK_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD);
     public static final TextAttributesKey TYPE =
-        createTextAttributesKey("STAN_TYPE", DefaultLanguageHighlighterColors.CLASS_NAME);
+        createTextAttributesKey("STAN_TYPE", DefaultLanguageHighlighterColors.KEYWORD);
     public static final TextAttributesKey BUILTIN_FUNCTION =
-        createTextAttributesKey("STAN_BUILTIN_FUNCTION", DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL);
+        createTextAttributesKey("STAN_BUILTIN_FUNCTION", DefaultLanguageHighlighterColors.FUNCTION_CALL);
     public static final TextAttributesKey NUMBER =
         createTextAttributesKey("STAN_NUMBER", DefaultLanguageHighlighterColors.NUMBER);
     public static final TextAttributesKey STRING =
@@ -31,7 +31,7 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
     public static final TextAttributesKey BLOCK_COMMENT =
         createTextAttributesKey("STAN_BLOCK_COMMENT", DefaultLanguageHighlighterColors.BLOCK_COMMENT);
     public static final TextAttributesKey OPERATOR =
-        createTextAttributesKey("STAN_OPERATOR", DefaultLanguageHighlighterColors.OPERATION_SIGN);
+        createTextAttributesKey("STAN_OPERATOR", DefaultLanguageHighlighterColors.KEYWORD);
     public static final TextAttributesKey BRACES =
         createTextAttributesKey("STAN_BRACES", DefaultLanguageHighlighterColors.BRACES);
     public static final TextAttributesKey BRACKETS =
