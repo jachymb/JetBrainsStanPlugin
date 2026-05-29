@@ -2,6 +2,7 @@ package org.intellij.stan;
 
 import com.intellij.lang.ASTNode;
 import com.intellij.psi.tree.IElementType;
+import org.intellij.stan.psi.StanTypes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -24,7 +25,7 @@ public final class StanSignatureDatabase {
 
     public static final class Signature {
         public final List<String> args;
-        public final @Nullable String ret; // null == void
+        public final @Nullable String ret;
 
         Signature(List<String> args, @Nullable String ret) {
             this.args = Collections.unmodifiableList(args);
@@ -36,8 +37,8 @@ public final class StanSignatureDatabase {
 
     private static volatile StanSignatureDatabase INSTANCE;
 
-    private final Map<String, List<Signature>> functions; // name → overloads
-    private final Set<String> distributionFunctions;     // names ending in _lpdf/_lpmf/_lcdf/_lccdf
+    private final Map<String, List<Signature>> functions;
+    private final Set<String> distributionFunctions;
 
     public static StanSignatureDatabase getInstance() {
         if (INSTANCE == null) {
@@ -106,8 +107,7 @@ public final class StanSignatureDatabase {
                 @SuppressWarnings("unchecked")
                 List<Object> argsRaw = (List<Object>) sig.get(0);
                 List<String> args = new ArrayList<>();
-                if (argsRaw != null)
-                    for (Object a : argsRaw) args.add((String) a);
+                if (argsRaw != null) for (Object a : argsRaw) args.add((String) a);
                 String ret = (String) sig.get(1);
                 sigs.add(new Signature(args, ret));
             }
@@ -117,198 +117,196 @@ public final class StanSignatureDatabase {
     }
 
     private static final class JsonReader {
-        final String s;
-        int i;
+        final String s; int i;
         JsonReader(String s) { this.s = s; i = 0; }
         void skipWs() { while (i < s.length() && s.charAt(i) <= ' ') i++; }
 
         String readString() {
-            i++; // skip opening "
-            int start = i;
-            while (i < s.length() && s.charAt(i) != '"') {
-                if (s.charAt(i) == '\\') i++;
-                i++;
-            }
-            String v = s.substring(start, i);
-            i++; // skip closing "
-            return v;
+            i++; int start = i;
+            while (i < s.length() && s.charAt(i) != '"') { if (s.charAt(i) == '\\') i++; i++; }
+            String v = s.substring(start, i); i++; return v;
         }
-
         List<Object> readArray() {
-            i++; // skip [
-            List<Object> list = new ArrayList<>();
-            skipWs();
+            i++; List<Object> list = new ArrayList<>(); skipWs();
             while (i < s.length() && s.charAt(i) != ']') {
-                list.add(readValue());
-                skipWs();
+                list.add(readValue()); skipWs();
                 if (i < s.length() && s.charAt(i) == ',') { i++; skipWs(); }
             }
-            i++; // skip ]
-            return list;
+            i++; return list;
         }
-
         Map<String, Object> readObject() {
-            i++; // skip {
-            Map<String, Object> map = new LinkedHashMap<>();
-            skipWs();
+            i++; Map<String, Object> map = new LinkedHashMap<>(); skipWs();
             while (i < s.length() && s.charAt(i) != '}') {
-                String key = readString();
-                skipWs(); i++; // skip :
-                map.put(key, readValue());
-                skipWs();
+                String key = readString(); skipWs(); i++;
+                map.put(key, readValue()); skipWs();
                 if (i < s.length() && s.charAt(i) == ',') { i++; skipWs(); }
             }
-            i++; // skip }
-            return map;
+            i++; return map;
         }
-
         Object readValue() {
-            skipWs();
-            char c = i < s.length() ? s.charAt(i) : 0;
+            skipWs(); char c = i < s.length() ? s.charAt(i) : 0;
             if (c == '"') return readString();
             if (c == '[') return readArray();
             if (c == '{') return readObject();
-            if (c == 'n') { i += 4; return null; } // null
+            if (c == 'n') { i += 4; return null; }
             if (c == 't') { i += 4; return Boolean.TRUE; }
             if (c == 'f') { i += 5; return Boolean.FALSE; }
-            // number
             int start = i;
             while (i < s.length() && ",]}".indexOf(s.charAt(i)) < 0) i++;
-            String num = s.substring(start, i).trim();
-            return num;
+            return s.substring(start, i).trim();
         }
     }
 
-    // ── Type string utilities (shared by multiple inspections) ────────────────
+    // ── Type string utilities ─────────────────────────────────────────────────
 
     /**
-     * Convert a parsed type AST node (INT_TYPE, MATRIX_TYPE, ARRAY_TYPE, etc.)
-     * to the canonical type string used in the signature database.
-     * Returns null if the type cannot be represented (tuples, unsized types).
+     * Convert a type AST node to the canonical type string used in the signature database.
+     * Handles: var_type, top_var_type, sized_basic_type, unsized_basic_type, unsized_type,
+     * or bare keyword tokens (int, real, vector, …).
+     * Returns null for tuples and unrepresentable types.
      */
     public static @Nullable String typeNodeToString(@Nullable ASTNode typeNode) {
         if (typeNode == null) return null;
         IElementType t = typeNode.getElementType();
 
-        if (t == StanElementTypes.INT_TYPE)     return "int";
-        if (t == StanElementTypes.REAL_TYPE)    return "real";
-        if (t == StanElementTypes.COMPLEX_TYPE) return "complex";
-
-        if (t == StanElementTypes.VECTOR_TYPE
-         || t == StanElementTypes.ORDERED_TYPE
-         || t == StanElementTypes.POSITIVE_ORDERED_TYPE
-         || t == StanElementTypes.SIMPLEX_TYPE
-         || t == StanElementTypes.UNIT_VECTOR_TYPE
-         || t == StanElementTypes.SUM_TO_ZERO_VECTOR_TYPE) return "vector";
-
-        if (t == StanElementTypes.ROW_VECTOR_TYPE) return "row_vector";
-
-        if (t == StanElementTypes.MATRIX_TYPE
-         || t == StanElementTypes.SUM_TO_ZERO_MATRIX_TYPE
-         || t == StanElementTypes.CHOLESKY_FACTOR_CORR_TYPE
-         || t == StanElementTypes.CHOLESKY_FACTOR_COV_TYPE
-         || t == StanElementTypes.CORR_MATRIX_TYPE
-         || t == StanElementTypes.COV_MATRIX_TYPE
-         || t == StanElementTypes.COLUMN_STOCHASTIC_MATRIX_TYPE
-         || t == StanElementTypes.ROW_STOCHASTIC_MATRIX_TYPE) return "matrix";
-
-        if (t == StanElementTypes.COMPLEX_VECTOR_TYPE)     return "complex_vector";
-        if (t == StanElementTypes.COMPLEX_ROW_VECTOR_TYPE) return "complex_row_vector";
-        if (t == StanElementTypes.COMPLEX_MATRIX_TYPE)     return "complex_matrix";
-
-        if (t == StanElementTypes.ARRAY_TYPE) {
-            // Count top-level COMMA children to determine the number of dimensions.
-            // array[n, m] int has 1 comma → 2 dimensions → "a[a[int]]".
-            // Commas inside dimension expressions are inside composite children and not counted.
-            int dims = 1;
-            ASTNode inner = typeNode.getLastChildNode();
-            for (ASTNode c = typeNode.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.COMMA) dims++;
+        // var_type ::= arr_dims element_type | element_type
+        if (t == StanTypes.VAR_TYPE) {
+            ASTNode first = typeNode.getFirstChildNode();
+            if (first == null) return null;
+            if (first.getElementType() == StanTypes.ARR_DIMS) {
+                int dims = countCommasIn(first) + 1;
+                ASTNode elemNode = first.getTreeNext();
+                String inner = typeNodeToString(elemNode);
+                if (inner == null) return null;
+                for (int i = 0; i < dims; i++) inner = "a[" + inner + "]";
+                return inner;
             }
-            // Inner element type is the last composite child (after the closing bracket)
-            while (inner != null && inner.getFirstChildNode() == null) {
-                inner = inner.getTreePrev();
-            }
-            String innerStr = typeNodeToString(inner);
-            if (innerStr == null) return null;
-            for (int i = 0; i < dims; i++) innerStr = "a[" + innerStr + "]";
-            return innerStr;
+            return typeNodeToString(first);
         }
-        if (t == StanElementTypes.UNSIZED_ARRAY_TYPE) {
-            // Children: ARRAY_KW, UNSIZED_DIMS ([,] etc.), then element type.
-            // Count commas in UNSIZED_DIMS to get the number of dimensions.
-            int dims = 1;
-            for (ASTNode c = typeNode.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanElementTypes.UNSIZED_DIMS) {
-                    for (ASTNode cc = c.getFirstChildNode(); cc != null; cc = cc.getTreeNext())
-                        if (cc.getElementType() == StanTokenTypes.COMMA) dims++;
-                    break;
+
+        // sized_basic_type / unsized_basic_type: first child is a keyword token.
+        if (t == StanTypes.SIZED_BASIC_TYPE || t == StanTypes.UNSIZED_BASIC_TYPE) {
+            ASTNode kw = typeNode.getFirstChildNode();
+            return kw != null ? kwToTypeString(kw.getElementType()) : null;
+        }
+
+        // top_var_type: first child is the leading keyword (INT, REAL, VECTOR, ORDERED …).
+        if (t == StanTypes.TOP_VAR_TYPE) {
+            ASTNode kw = typeNode.getFirstChildNode();
+            return kw != null ? kwToTypeString(kw.getElementType()) : null;
+        }
+
+        // unsized_type ::= ARRAY unsized_dims unsized_basic_type | unsized_basic_type | …
+        if (t == StanTypes.UNSIZED_TYPE) {
+            ASTNode first = typeNode.getFirstChildNode();
+            if (first == null) return null;
+            if (first.getElementType() == StanTypes.ARRAY) {
+                // Locate unsized_dims to count dimensions.
+                ASTNode dimsNode = null;
+                for (ASTNode c = first.getTreeNext(); c != null; c = c.getTreeNext()) {
+                    if (c.getElementType() == StanTypes.UNSIZED_DIMS) { dimsNode = c; break; }
                 }
+                int dims = dimsNode != null ? countCommasIn(dimsNode) + 1 : 1;
+                ASTNode last = typeNode.getLastChildNode();
+                String inner = typeNodeToString(last);
+                if (inner == null) return null;
+                for (int i = 0; i < dims; i++) inner = "a[" + inner + "]";
+                return inner;
             }
-            ASTNode last = typeNode.getLastChildNode();
-            if (last == null) return null;
-            String innerStr = last.getFirstChildNode() != null
-                    ? typeNodeToString(last)
-                    : kwToTypeString(last.getElementType());
-            if (innerStr == null) return null;
-            for (int i = 0; i < dims; i++) innerStr = "a[" + innerStr + "]";
-            return innerStr;
+            return typeNodeToString(first);
         }
-        return null; // tuple — skip
+
+        // Bare keyword token (int, real, vector, …) used directly.
+        return kwToTypeString(t);
+    }
+
+    private static int countCommasIn(@NotNull ASTNode node) {
+        int n = 0;
+        for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
+            if (c.getElementType() == StanTypes.COMMA) n++;
+        return n;
     }
 
     /**
-     * Infer the type string for an expression node, using a pre-built type map
-     * from the surrounding scope.  Returns null when type cannot be determined
-     * (which causes callers to skip the check rather than produce false positives).
+     * Infer the type string for an expression node using a pre-built type map.
+     * Returns null when the type cannot be determined.
      */
     public static @Nullable String inferExprType(@Nullable ASTNode expr,
                                                   @NotNull Map<String, String> typeMap) {
         if (expr == null) return null;
         IElementType t = expr.getElementType();
 
-        if (t == StanElementTypes.INT_LITERAL_EXPR)  return "int";
-        if (t == StanElementTypes.REAL_LITERAL_EXPR) return "real";
-        if (t == StanElementTypes.IMAG_LITERAL_EXPR) return "complex";
+        // Named literal rules
+        if (t == StanTypes.INT_LITERAL_EXPR)  return "int";
+        if (t == StanTypes.REAL_LITERAL_EXPR) return "real";
+        if (t == StanTypes.IMAG_LITERAL_EXPR) return "complex";
+        // Bare literal tokens
+        if (t == StanTypes.INTNUMERAL)  return "int";
+        if (t == StanTypes.REALNUMERAL) return "real";
+        if (t == StanTypes.IMAGNUMERAL) return "complex";
 
-        if (t == StanElementTypes.VARIABLE_EXPR) {
-            ASTNode name = expr.getFirstChildNode();
-            if (name != null && name.getElementType() == StanTokenTypes.IDENTIFIER)
-                return typeMap.get(name.getText());
+        // Variable reference: variable_expr ::= ident
+        if (t == StanTypes.VARIABLE_EXPR) {
+            return typeMap.get(expr.getText());
+        }
+
+        // Parenthesised expression
+        if (t == StanTypes.PAREN_EXPR) {
+            ASTNode lp = expr.getFirstChildNode(); // LPAREN
+            return inferExprType(lp != null ? lp.getTreeNext() : null, typeMap);
+        }
+
+        // Function calls
+        if (t == StanTypes.FUN_CALL_EXPR || t == StanTypes.COND_DIST_EXPR) {
+            ASTNode identNode = expr.getFirstChildNode(); // ident wrapper
+            if (identNode == null) return null;
+            String fnName = identNode.getText();
+            List<Signature> sigs = getInstance().getSignatures(fnName);
+            if (sigs.isEmpty()) return null;
+
+            List<ASTNode> argNodes = new ArrayList<>();
+            collectCallArgs(expr, argNodes);
+            int argCount = argNodes.size();
+            List<String> argTypes = new ArrayList<>(argCount);
+            for (ASTNode a : argNodes) argTypes.add(inferExprType(a, typeMap));
+
+            if (argTypes.stream().noneMatch(s -> s != null)) return null;
+
+            for (int pass = 0; pass < 2; pass++) {
+                for (Signature sig : sigs) {
+                    if (argCount > 0 && sig.args.size() != argCount) continue;
+                    boolean ok = true;
+                    for (int i = 0; i < argTypes.size(); i++) {
+                        String actual = argTypes.get(i);
+                        String expected = sig.args.get(i);
+                        boolean match = pass == 0
+                                ? (actual == null || expected.equals(actual))
+                                : isCompatible(expected, actual);
+                        if (!match) { ok = false; break; }
+                    }
+                    if (ok) return sig.ret;
+                }
+            }
             return null;
         }
 
-        if (t == StanElementTypes.PAREN_EXPR) {
-            ASTNode inner = expr.getFirstChildNode(); // LPAREN
-            if (inner != null) inner = inner.getTreeNext();
-            return inferExprType(inner, typeMap);
-        }
-
-        if (t == StanElementTypes.PREFIX_OP_EXPR) {
-            // unary -/+ preserves numeric type
-            ASTNode op = expr.getFirstChildNode();
-            return inferExprType(op != null ? op.getTreeNext() : null, typeMap);
-        }
-
-        if (t == StanElementTypes.INDEXED_EXPR) {
-            // First child is the base expression; strip one indexing dimension per index.
+        // Indexing expression
+        if (t == StanTypes.INDEX_EXPR) {
             ASTNode base = expr.getFirstChildNode();
+            if (base == null) return null;
+            if (base.getTreeNext() == null) return inferExprType(base, typeMap);
+
             String baseType = inferExprType(base, typeMap);
             if (baseType == null) return null;
-            // Count indices: 1 + number of top-level COMMA tokens in INDEX_LIST.
             int dims = 1;
-            for (ASTNode c = expr.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanElementTypes.INDEX_LIST) {
-                    for (ASTNode ic = c.getFirstChildNode(); ic != null; ic = ic.getTreeNext())
-                        if (ic.getElementType() == StanTokenTypes.COMMA) dims++;
-                    break;
-                }
+            for (ASTNode c = base.getTreeNext(); c != null; c = c.getTreeNext()) {
+                if (c.getElementType() == StanTypes.INDEX_LIST) { dims += countCommasIn(c); break; }
             }
             String result = baseType;
             for (int d = 0; d < dims; d++) {
-                if (result.startsWith("a["))                                    result = result.substring(2, result.length() - 1);
-                else if ("matrix".equals(result))                               result = "row_vector";
-                else if ("complex_matrix".equals(result))                       result = "complex_row_vector";
+                if (result.startsWith("a["))                                     result = result.substring(2, result.length() - 1);
+                else if ("matrix".equals(result))                                result = "row_vector";
+                else if ("complex_matrix".equals(result))                        result = "complex_row_vector";
                 else if ("vector".equals(result) || "row_vector".equals(result)) result = "real";
                 else if ("complex_vector".equals(result) || "complex_row_vector".equals(result)) result = "complex";
                 else return null;
@@ -316,86 +314,58 @@ public final class StanSignatureDatabase {
             return result;
         }
 
-        if (t == StanElementTypes.FUN_CALL_EXPR || t == StanElementTypes.COND_DIST_EXPR) {
-            // Look up the return type of the called function from the database.
-            // COND_DIST_EXPR (bar notation) is treated identically: same name, same return type.
-            ASTNode nameNode = expr.getFirstChildNode();
-            if (nameNode != null && (nameNode.getElementType() == StanTokenTypes.BUILTIN_FUNCTION
-                                  || nameNode.getElementType() == StanTokenTypes.IDENTIFIER)) {
-                String fnName = nameNode.getText();
-                List<Signature> sigs = getInstance().getSignatures(fnName);
-                if (!sigs.isEmpty()) {
-                    // Collect arg nodes and infer their types across both ARG_LISTs (before and after |).
-                    List<ASTNode> argNodes = new ArrayList<>();
-                    for (ASTNode c = expr.getFirstChildNode(); c != null; c = c.getTreeNext())
-                        if (c.getElementType() == StanElementTypes.ARG_LIST)
-                            for (ASTNode a = c.getFirstChildNode(); a != null; a = a.getTreeNext())
-                                if (a.getFirstChildNode() != null) argNodes.add(a);
-                    int argCount = argNodes.size();
-                    List<String> argTypes = new ArrayList<>(argCount);
-                    for (ASTNode a : argNodes)
-                        argTypes.add(inferExprType(a, typeMap));
-
-                    // If all arg types are unknown we can't determine the return type.
-                    // Picking the first matching signature would be arbitrary and cause false positives.
-                    boolean anyKnown = argTypes.stream().anyMatch(s -> s != null);
-                    if (!anyKnown) return null;
-
-                    // Find the best matching signature for arity and known arg types.
-                    // Two passes: exact match first, then promotion-compatible match.
-                    // This avoids picking (complex)->complex over (real)->real for a real arg,
-                    // and avoids picking deeply-vectorized signatures for scalar args.
-                    for (int pass = 0; pass < 2; pass++) {
-                        for (Signature sig : sigs) {
-                            if (argCount > 0 && sig.args.size() != argCount) continue;
-                            boolean ok = true;
-                            for (int i = 0; i < argTypes.size(); i++) {
-                                String actual = argTypes.get(i);
-                                String expected = sig.args.get(i);
-                                boolean match = pass == 0
-                                        ? (actual == null || expected.equals(actual))
-                                        : isCompatible(expected, actual);
-                                if (!match) { ok = false; break; }
-                            }
-                            if (ok) return sig.ret;
-                        }
-                    }
-                }
-            }
-            return null;
+        // Unary expression: BANG unary_expr | MINUS/PLUS unary_expr | pow_expr
+        if (t == StanTypes.UNARY_EXPR) {
+            ASTNode first = expr.getFirstChildNode();
+            if (first == null) return null;
+            IElementType ft = first.getElementType();
+            if (ft == StanTypes.BANG) return "int";
+            if (ft == StanTypes.MINUS || ft == StanTypes.PLUS)
+                return inferExprType(first.getTreeNext(), typeMap);
+            return inferExprType(first, typeMap); // pow_expr transparent
         }
 
-        if (t == StanElementTypes.BINARY_OP_EXPR) {
-            // Use common_type promotion on the two operands
-            ASTNode lhsNode = expr.getFirstChildNode();
-            ASTNode rhsNode = lhsNode != null ? lhsNode.getTreeNext() : null; // op token
-            if (rhsNode != null) rhsNode = rhsNode.getTreeNext(); // rhs
-            String lhs = inferExprType(lhsNode, typeMap);
-            String rhs = inferExprType(rhsNode, typeMap);
-            return commonType(lhs, rhs);
+        // Arithmetic binary ops
+        if (t == StanTypes.ADD_EXPR || t == StanTypes.MUL_EXPR || t == StanTypes.LDIV_EXPR) {
+            return binaryOpType(expr, typeMap);
         }
+        if (t == StanTypes.POW_EXPR) {
+            ASTNode first = expr.getFirstChildNode();
+            if (first == null) return null;
+            if (first.getTreeNext() == null) return inferExprType(first, typeMap);
+            return binaryOpType(expr, typeMap);
+        }
+
+        // Transparent wrappers
+        ASTNode first = expr.getFirstChildNode();
+        if (first != null && first.getTreeNext() == null)
+            return inferExprType(first, typeMap);
 
         return null;
     }
 
-    private static @Nullable ASTNode findArgList(ASTNode funCall) {
-        for (ASTNode c = funCall.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-            if (c.getElementType() == StanElementTypes.ARG_LIST) return c;
+    private static void collectCallArgs(ASTNode callNode, List<ASTNode> result) {
+        boolean inArgs = false;
+        for (ASTNode c = callNode.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+            IElementType ct = c.getElementType();
+            if (ct == StanTypes.LPAREN) { inArgs = true; continue; }
+            if (ct == StanTypes.RPAREN) break;
+            if (!inArgs) continue;
+            if (ct == StanTypes.COMMA || ct == StanTypes.BAR) continue;
+            if (c.getFirstChildNode() != null) result.add(c);
         }
-        return null;
     }
 
-    private static int countArgListExprs(ASTNode argList) {
-        int count = 0;
-        for (ASTNode c = argList.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-            if (c.getFirstChildNode() != null) count++; // composite node = an expression
-        }
-        return count;
+    private static @Nullable String binaryOpType(ASTNode expr, Map<String, String> typeMap) {
+        ASTNode lhs = expr.getFirstChildNode();
+        if (lhs == null) return null;
+        ASTNode op = lhs.getTreeNext();
+        ASTNode rhs = op != null ? op.getTreeNext() : null;
+        return commonType(inferExprType(lhs, typeMap), inferExprType(rhs, typeMap));
     }
 
     /**
-     * Build a name → type-string map for all variables declared in the file.
-     * Covers VAR_DECL, ARG_DECL, and for-range loop variables.
+     * Build a name → type-string map for all declared variables in the file.
      */
     public static @NotNull Map<String, String> buildTypeMap(@NotNull ASTNode root) {
         Map<String, String> map = new HashMap<>();
@@ -406,54 +376,76 @@ public final class StanSignatureDatabase {
     private static void buildTypeMapRec(ASTNode node, Map<String, String> map) {
         IElementType t = node.getElementType();
 
-        if (t == StanElementTypes.VAR_DECL) {
-            ASTNode typeNode = node.getFirstChildNode();
+        if (t == StanTypes.VAR_DECL) {
+            // var_decl ::= var_type declared_var (COMMA declared_var_extra)* SEMICOLON
+            ASTNode typeNode = node.getFirstChildNode(); // var_type
             String typeStr = typeNodeToString(typeNode);
             if (typeStr != null) {
-                for (ASTNode c = typeNode.getTreeNext(); c != null; c = c.getTreeNext()) {
-                    if (c.getElementType() == StanElementTypes.DECLARED_VAR) {
-                        ASTNode name = c.getFirstChildNode();
-                        if (name != null && name.getElementType() == StanTokenTypes.IDENTIFIER)
-                            map.put(name.getText(), typeStr);
+                for (ASTNode c = typeNode != null ? typeNode.getTreeNext() : null;
+                     c != null; c = c.getTreeNext()) {
+                    IElementType ct = c.getElementType();
+                    if (ct == StanTypes.DECLARED_VAR || ct == StanTypes.DECLARED_VAR_EXTRA)
+                        recordDeclaredVar(c, typeStr, map);
+                }
+            }
+
+        } else if (t == StanTypes.TOP_VAR_DECL) {
+            // top_var_decl ::= [arr_dims] top_var_type top_declared_var ... SEMICOLON
+            String typeStr = computeTopDeclType(node, StanTypes.TOP_DECLARED_VAR,
+                                                StanTypes.TOP_DECLARED_VAR_EXTRA, map);
+            // recurse with already-registered names — skip registering again
+            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
+                buildTypeMapRec(c, map);
+            return;
+
+        } else if (t == StanTypes.TOP_VAR_DECL_NO_ASSIGN) {
+            // top_var_decl_no_assign ::= [arr_dims] top_var_type no_assign_var ... SEMICOLON
+            ASTNode[] typeInfo = findTypeAndArrDims(node);
+            ASTNode arrDims = typeInfo[0];
+            ASTNode typeNode = typeInfo[1];
+            String base = typeNodeToString(typeNode);
+            if (base != null) {
+                if (arrDims != null) {
+                    int dims = countCommasIn(arrDims) + 1;
+                    for (int i = 0; i < dims; i++) base = "a[" + base + "]";
+                }
+                final String typeStr = base;
+                for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+                    IElementType ct = c.getElementType();
+                    if (ct == StanTypes.NO_ASSIGN_VAR || ct == StanTypes.NO_ASSIGN_VAR_EXTRA) {
+                        // no_assign_var ::= decl_identifier
+                        ASTNode di = c.getFirstChildNode();
+                        if (di != null) map.put(di.getText(), typeStr);
                     }
                 }
             }
 
-        } else if (t == StanElementTypes.ARG_DECL) {
-            // type node is first composite child, name is the IDENTIFIER after it
+        } else if (t == StanTypes.ARG_DECL) {
+            // arg_decl ::= DATABLOCK? unsized_type decl_identifier
             ASTNode typeNode = null;
             String paramName = null;
             for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.DATA_KW) continue;
-                if (typeNode == null && c.getFirstChildNode() != null) {
-                    typeNode = c;
-                } else if (c.getElementType() == StanTokenTypes.IDENTIFIER
-                        || c.getElementType() == StanTokenTypes.BUILTIN_FUNCTION) {
-                    paramName = c.getText();
-                }
+                if (c.getElementType() == StanTypes.DATABLOCK) continue;
+                if (typeNode == null && c.getFirstChildNode() != null) typeNode = c;
+                if (c.getElementType() == StanTypes.DECL_IDENTIFIER) { paramName = c.getText(); }
             }
-            // For basic unsized types (e.g. "real foo"), the type is a bare keyword token
             if (typeNode == null) {
                 for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                    if (c.getElementType() == StanTokenTypes.DATA_KW) continue;
+                    if (c.getElementType() == StanTypes.DATABLOCK) continue;
                     String s = kwToTypeString(c.getElementType());
                     if (s != null) { typeNode = c; break; }
                 }
             }
-            if (typeNode != null && paramName != null) {
+            if (paramName != null && typeNode != null) {
                 String ts = typeNodeToString(typeNode);
                 if (ts == null) ts = kwToTypeString(typeNode.getElementType());
                 if (ts != null) map.put(paramName, ts);
             }
-            return; // no nested declarations inside ARG_DECL
+            return;
 
-        } else if (t == StanElementTypes.FOR_RANGE_STMT) {
-            // loop variable is always int
+        } else if (t == StanTypes.FOR_RANGE_STMT) {
             for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.IDENTIFIER) {
-                    map.put(c.getText(), "int");
-                    break;
-                }
+                if (c.getElementType() == StanTypes.IDENT) { map.put(c.getText(), "int"); break; }
             }
         }
 
@@ -461,37 +453,80 @@ public final class StanSignatureDatabase {
             buildTypeMapRec(c, map);
     }
 
-    private static @Nullable String kwToTypeString(IElementType kw) {
-        if (kw == StanTokenTypes.INT_KW)              return "int";
-        if (kw == StanTokenTypes.REAL_KW)             return "real";
-        if (kw == StanTokenTypes.COMPLEX_KW)          return "complex";
-        if (kw == StanTokenTypes.VECTOR_KW)           return "vector";
-        if (kw == StanTokenTypes.ROW_VECTOR_KW)       return "row_vector";
-        if (kw == StanTokenTypes.MATRIX_KW)           return "matrix";
-        if (kw == StanTokenTypes.COMPLEX_VECTOR_KW)     return "complex_vector";
-        if (kw == StanTokenTypes.COMPLEX_ROW_VECTOR_KW) return "complex_row_vector";
-        if (kw == StanTokenTypes.COMPLEX_MATRIX_KW)     return "complex_matrix";
+    /** Find optional ARR_DIMS and the TOP_VAR_TYPE node in a top-level decl. */
+    private static ASTNode[] findTypeAndArrDims(ASTNode decl) {
+        ASTNode arrDims = null, typeNode = null;
+        for (ASTNode c = decl.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+            IElementType ct = c.getElementType();
+            if (ct == StanTypes.ARR_DIMS) { arrDims = c; }
+            else if (ct == StanTypes.TOP_VAR_TYPE || ct == StanTypes.TOP_TUPLE_TYPE) {
+                typeNode = c; break;
+            }
+        }
+        return new ASTNode[]{arrDims, typeNode};
+    }
+
+    private static @Nullable String computeTopDeclType(ASTNode decl,
+                                                        IElementType declVar,
+                                                        IElementType declVarExtra,
+                                                        Map<String, String> map) {
+        ASTNode[] typeInfo = findTypeAndArrDims(decl);
+        ASTNode arrDims = typeInfo[0];
+        ASTNode typeNode = typeInfo[1];
+        String base = typeNodeToString(typeNode);
+        if (base == null) return null;
+        if (arrDims != null) {
+            int dims = countCommasIn(arrDims) + 1;
+            for (int i = 0; i < dims; i++) base = "a[" + base + "]";
+        }
+        final String typeStr = base;
+        for (ASTNode c = decl.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+            IElementType ct = c.getElementType();
+            if (ct == declVar || ct == declVarExtra) recordDeclaredVar(c, typeStr, map);
+        }
+        return typeStr;
+    }
+
+    private static void recordDeclaredVar(ASTNode declVar, String typeStr, Map<String, String> map) {
+        // declared_var ::= decl_identifier (ASSIGN expression)?
+        // decl_identifier ::= ident | reserved_word
+        // Use .getText() on the first child to get the name regardless of depth.
+        ASTNode first = declVar.getFirstChildNode();
+        if (first != null) map.put(first.getText(), typeStr);
+    }
+
+    /** Map a type keyword token to a canonical type string. */
+    public static @Nullable String kwToTypeString(IElementType kw) {
+        if (kw == StanTypes.INT)            return "int";
+        if (kw == StanTypes.REAL)           return "real";
+        if (kw == StanTypes.COMPLEX)        return "complex";
+        if (kw == StanTypes.VECTOR)         return "vector";
+        if (kw == StanTypes.ROWVECTOR)      return "row_vector";
+        if (kw == StanTypes.MATRIX)         return "matrix";
+        if (kw == StanTypes.COMPLEXVECTOR)     return "complex_vector";
+        if (kw == StanTypes.COMPLEXROWVECTOR)  return "complex_row_vector";
+        if (kw == StanTypes.COMPLEXMATRIX)     return "complex_matrix";
+        if (kw == StanTypes.ORDERED || kw == StanTypes.POSITIVEORDERED
+         || kw == StanTypes.SIMPLEX || kw == StanTypes.UNITVECTOR
+         || kw == StanTypes.SUMTOZEROVEC)   return "vector";
+        if (kw == StanTypes.CHOLESKYFACTORCORR || kw == StanTypes.CHOLESKYFACTORCOV
+         || kw == StanTypes.CORRMATRIX || kw == StanTypes.COVMATRIX
+         || kw == StanTypes.SUMTOZEROMAT
+         || kw == StanTypes.STOCHASTICCOLUMNMATRIX || kw == StanTypes.STOCHASTICROWMATRIX)
+            return "matrix";
         return null;
     }
 
     // ── Type compatibility ────────────────────────────────────────────────────
 
-    /**
-     * True when a value of type {@code actual} can be used where {@code expected} is required.
-     * Implements the promotion rules from stanc3's UnsizedType.common_type.
-     * null actual → true (unknown, skip the check).
-     */
     public static boolean isCompatible(@NotNull String expected, @Nullable String actual) {
         if (actual == null) return true;
         if (expected.equals(actual)) return true;
-        // scalar promotions: int → real → complex
         if (expected.equals("real")    && actual.equals("int"))   return true;
         if (expected.equals("complex") && (actual.equals("int")  || actual.equals("real"))) return true;
-        // container promotions: real variant → complex variant
         if (expected.equals("complex_vector")     && actual.equals("vector"))     return true;
         if (expected.equals("complex_row_vector") && actual.equals("row_vector")) return true;
         if (expected.equals("complex_matrix")     && actual.equals("matrix"))     return true;
-        // array: element-wise
         if (expected.startsWith("a[") && actual.startsWith("a[")) {
             String ei = expected.substring(2, expected.length() - 1);
             String ai = actual.substring(2, actual.length() - 1);
@@ -500,21 +535,15 @@ public final class StanSignatureDatabase {
         return false;
     }
 
-    /**
-     * Minimal type that both t1 and t2 can promote to (mirrors stanc3's common_type).
-     * Returns null if no common type exists.
-     */
     public static @Nullable String commonType(@Nullable String t1, @Nullable String t2) {
         if (t1 == null || t2 == null) return null;
         if (t1.equals(t2)) return t1;
         if (isCompatible(t2, t1)) return t2;
         if (isCompatible(t1, t2)) return t1;
-        // array element-wise
         if (t1.startsWith("a[") && t2.startsWith("a[")) {
             String c = commonType(t1.substring(2, t1.length()-1), t2.substring(2, t2.length()-1));
             return c != null ? "a[" + c + "]" : null;
         }
-        // Broadcasting: container op scalar (e.g. matrix + int → matrix, vector + complex → complex_vector)
         if (isContainerType(t1) && isScalarType(t2)) return broadcastContainerScalar(t1, t2);
         if (isScalarType(t1) && isContainerType(t2)) return broadcastContainerScalar(t2, t1);
         return null;
@@ -536,6 +565,6 @@ public final class StanSignatureDatabase {
             if ("vector".equals(container))     return "complex_vector";
             if ("row_vector".equals(container)) return "complex_row_vector";
         }
-        return container; // int or real scalar preserves the container type
+        return container;
     }
 }

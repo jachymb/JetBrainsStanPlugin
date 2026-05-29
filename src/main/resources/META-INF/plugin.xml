@@ -46,6 +46,10 @@
         <colorSettingsPage
             implementation="org.intellij.stan.StanColorSettingsPage"/>
 
+        <annotator
+            language="Stan"
+            implementationClass="org.intellij.stan.StanBuiltinAnnotator"/>
+
         <localInspection
             language="Stan"
             displayName="Reserved word used as identifier"

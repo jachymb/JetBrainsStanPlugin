@@ -1,6 +1,5 @@
 package org.intellij.stan;
 
-import com.intellij.extapi.psi.ASTWrapperPsiElement;
 import com.intellij.extapi.psi.PsiFileBase;
 import com.intellij.lang.ASTNode;
 import com.intellij.lang.ParserDefinition;
@@ -13,6 +12,9 @@ import com.intellij.psi.PsiElement;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.tree.IFileElementType;
 import com.intellij.psi.tree.TokenSet;
+import org.intellij.stan.lexer.StanLexer;
+import org.intellij.stan.parser.StanParser;
+import org.intellij.stan.psi.StanTypes;
 import org.jetbrains.annotations.NotNull;
 
 public class StanParserDefinition implements ParserDefinition {
@@ -36,17 +38,17 @@ public class StanParserDefinition implements ParserDefinition {
 
     @Override
     public @NotNull TokenSet getCommentTokens() {
-        return TokenSet.create(StanTokenTypes.LINE_COMMENT, StanTokenTypes.BLOCK_COMMENT);
+        return TokenSet.create(StanTypes.LINE_COMMENT, StanTypes.BLOCK_COMMENT);
     }
 
     @Override
     public @NotNull TokenSet getStringLiteralElements() {
-        return TokenSet.create(StanTokenTypes.STRING_LITERAL);
+        return TokenSet.create(StanTypes.STRINGLITERAL);
     }
 
     @Override
     public @NotNull PsiElement createElement(ASTNode node) {
-        return new ASTWrapperPsiElement(node);
+        return StanTypes.Factory.createElement(node);
     }
 
     @Override

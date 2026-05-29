@@ -25,9 +25,7 @@
 
   tokens = [
     // -----------------------------------------------------------------------
-    // Block keywords — lexer emits multi-word keywords as single tokens.
-    // The string literals below are for documentation / the token literal map;
-    // actual scanning is handled by Stan.flex.
+    // Block keywords
     // -----------------------------------------------------------------------
     FUNCTIONBLOCK            = 'functions'
     DATABLOCK                = 'data'
@@ -106,7 +104,7 @@
     TILDE     = '~'
     QMARK     = '?'
 
-    // Multi-character operators (must be listed before single-char prefixes in the lexer)
+    // Multi-character operators
     OR              = '||'
     AND             = '&&'
     EQUALS          = '=='
@@ -138,24 +136,14 @@
 
     // -----------------------------------------------------------------------
     // Literals — regex patterns match stanc3 lexer.mll exactly.
-    // The actual JFlex rules belong in Stan.flex; the patterns here serve as
-    // documentation and drive GrammarKit's built-in lexer when Stan.flex is
-    // not yet wired in.
     // -----------------------------------------------------------------------
-    // Integer: digits with optional underscore separators (e.g. 1_000_000)
     INTNUMERAL    = 'regexp:[0-9]+(_[0-9]+)*'
-    // Real: decimal with optional exponent (many forms — see lexer.mll real_constant*)
     REALNUMERAL   = 'regexp:(([0-9]+(_[0-9]+)*\.([0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*)([eE][+\-]?[0-9]+(_[0-9]+)*)?|\.[0-9]+(_[0-9]+)*([eE][+\-]?[0-9]+(_[0-9]+)*)?)'
-    // Dot-numeral: used for tuple projection, e.g. x.1  (distinct from REALNUMERAL)
     DOTNUMERAL    = 'regexp:\.[0-9]+'
-    // Imaginary: integer or real literal followed by 'i'
     IMAGNUMERAL   = 'regexp:(([0-9]+(_[0-9]+)*\.([0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*|\.[0-9]+(_[0-9]+)*)([eE][+\-]?[0-9]+(_[0-9]+)*)?)i'
-    // String: double-quoted, no embedded quotes or newlines
     STRINGLITERAL = 'regexp:"[^"\r\n]*"'
-    // Identifier: letter followed by letters / digits / underscores
     IDENTIFIER    = 'regexp:[a-zA-Z][a-zA-Z0-9_]*'
 
-    // Skipped by parser; emitted by the lexer for comment-preserving tools
     WHITE_SPACE   = 'regexp:[ \t\r\n]+'
     LINE_COMMENT  = 'regexp://[^\r\n]*'
     BLOCK_COMMENT = 'regexp:/\*([^*]|\*+[^*/])*\*+/'
@@ -174,9 +162,6 @@ program ::= function_block?
             model_block?
             generated_quantities_block?
 
-// Alternative start rule: functions-only file (used by stanc3 internally)
-functions_only ::= function_def*
-
 // ============================================================================
 // Program blocks
 // ============================================================================
@@ -193,15 +178,15 @@ generated_quantities_block ::= GENERATEDQUANTITIESBLOCK  LBRACE top_vardecl_or_s
 // Identifiers
 // ============================================================================
 
-// TRUNCATE ('T') doubles as an ordinary identifier in expression context.
-identifier ::= IDENTIFIER | TRUNCATE
+// Renamed from "identifier" to "ident" to avoid a naming conflict in the
+// generated StanTypes.java where the IDENTIFIER token constant would clash
+// with a rule element type constant of the same name.
+ident ::= IDENTIFIER | TRUNCATE
 
-// stanc3 matches reserved_word here but immediately raises a parse error
-// ("Ill-formed identifier. Expected a new identifier but found reserved keyword …").
-// We accept reserved words silently so the parser recovers and an inspection
-// can report the error with better IDE context.
-decl_identifier              ::= identifier | reserved_word
-decl_identifier_after_comma  ::= identifier | reserved_word
+// Accept reserved Stan keywords in declaration position so the parser can
+// recover; an inspection reports the error with better IDE context.
+decl_identifier              ::= ident | reserved_word
+decl_identifier_after_comma  ::= ident | reserved_word
 
 reserved_word ::=
     FUNCTIONBLOCK | DATABLOCK | PARAMETERSBLOCK | MODELBLOCK
@@ -224,7 +209,6 @@ arg_decl_list ::= arg_decl (COMMA arg_decl)*
 
 return_type ::= VOID | unsized_type
 
-// DATABLOCK keyword marks data-only (non-parameter) arguments.
 arg_decl ::= DATABLOCK? unsized_type decl_identifier
 
 // ============================================================================
@@ -236,45 +220,39 @@ unsized_type ::= ARRAY unsized_dims unsized_basic_type
                | unsized_basic_type
                | unsized_tuple_type
 
-// Tuple with ≥ 2 component types.
 unsized_tuple_type ::= TUPLE LPAREN unsized_type COMMA unsized_type (COMMA unsized_type)* RPAREN
 
 unsized_basic_type ::= INT | REAL | COMPLEX | VECTOR | ROWVECTOR | MATRIX
                      | COMPLEXVECTOR | COMPLEXROWVECTOR | COMPLEXMATRIX
 
-// [,,] syntax — one or more dimensions indicated by commas between brackets.
 unsized_dims ::= LBRACK COMMA* RBRACK
 
 // ============================================================================
 // Declarations
 // ============================================================================
-// The parameterised decl / higher_type / array_type / tuple_type rules from
-// grammar.txt are expanded here into three concrete declaration forms.
 
-// -- 1. Local variable declarations (inside model block / function bodies) --
-//    Type must be a sized type; constraints are forbidden (semantic check).
-//    Multiple declarators may share one type.
+// -- Local variable declarations (inside model block / function bodies) --
 
-var_decl ::= var_type var_declarator (COMMA var_declarator_extra)* SEMICOLON
+var_decl ::= var_type declared_var (COMMA declared_var_extra)* SEMICOLON
 
-var_type ::= arr_dims var_tuple_type      // array of tuple
-           | arr_dims sized_basic_type    // array of basic type
-           | var_tuple_type               // tuple (no array wrapper)
-           | sized_basic_type             // basic scalar / container
+var_type ::= arr_dims var_tuple_type
+           | arr_dims sized_basic_type
+           | var_tuple_type
+           | sized_basic_type
 
-// Tuple type in a local declaration — components are recursively var_type.
 var_tuple_type ::= TUPLE LPAREN var_type COMMA var_type (COMMA var_type)* RPAREN
 
-var_declarator       ::= decl_identifier (ASSIGN expression)?
-var_declarator_extra ::= decl_identifier_after_comma (ASSIGN expression)?
+// declared_var and declared_var_extra share the same structure but are named
+// separately so GrammarKit generates a distinct IElementType for each.
+declared_var       ::= decl_identifier (ASSIGN expression)?
+declared_var_extra ::= decl_identifier_after_comma (ASSIGN expression)?
 
-// -- 2. Block-level variable declarations with optional initialiser --
-//    Type may include constraints (< lower=... >).
+// -- Block-level variable declarations with optional initialiser --
 
-top_var_decl ::= top_var_type top_declarator (COMMA top_declarator_extra)* SEMICOLON
-               | arr_dims top_var_type top_declarator (COMMA top_declarator_extra)* SEMICOLON
-               | arr_dims top_tuple_type top_declarator (COMMA top_declarator_extra)* SEMICOLON
-               | top_tuple_type top_declarator (COMMA top_declarator_extra)* SEMICOLON
+top_var_decl ::= top_var_type top_declared_var (COMMA top_declared_var_extra)* SEMICOLON
+               | arr_dims top_var_type top_declared_var (COMMA top_declared_var_extra)* SEMICOLON
+               | arr_dims top_tuple_type top_declared_var (COMMA top_declared_var_extra)* SEMICOLON
+               | top_tuple_type top_declared_var (COMMA top_declared_var_extra)* SEMICOLON
 
 top_tuple_type ::= TUPLE LPAREN top_higher_type COMMA top_higher_type (COMMA top_higher_type)* RPAREN
 
@@ -283,16 +261,19 @@ top_higher_type ::= arr_dims top_var_type
                   | top_var_type
                   | top_tuple_type
 
-top_declarator       ::= decl_identifier (ASSIGN expression)?
-top_declarator_extra ::= decl_identifier_after_comma (ASSIGN expression)?
+top_declared_var       ::= decl_identifier (ASSIGN expression)?
+top_declared_var_extra ::= decl_identifier_after_comma (ASSIGN expression)?
 
-// -- 3. Block-level declarations without initialiser (data / parameters blocks) --
+// -- Block-level declarations without initialiser (data / parameters blocks) --
 
-top_var_decl_no_assign ::= top_var_type decl_identifier (COMMA decl_identifier_after_comma)* SEMICOLON
-                          | arr_dims top_var_type decl_identifier (COMMA decl_identifier_after_comma)* SEMICOLON
-                          | arr_dims top_tuple_type decl_identifier (COMMA decl_identifier_after_comma)* SEMICOLON
-                          | top_tuple_type decl_identifier (COMMA decl_identifier_after_comma)* SEMICOLON
-                          | SEMICOLON   // lone semicolons are permitted in these blocks
+top_var_decl_no_assign ::= top_var_type no_assign_var (COMMA no_assign_var_extra)* SEMICOLON
+                          | arr_dims top_var_type no_assign_var (COMMA no_assign_var_extra)* SEMICOLON
+                          | arr_dims top_tuple_type no_assign_var (COMMA no_assign_var_extra)* SEMICOLON
+                          | top_tuple_type no_assign_var (COMMA no_assign_var_extra)* SEMICOLON
+                          | SEMICOLON
+
+no_assign_var       ::= decl_identifier
+no_assign_var_extra ::= decl_identifier_after_comma
 
 // ============================================================================
 // Sized basic types (local variable declarations)
@@ -336,55 +317,31 @@ top_var_type ::=
   | STOCHASTICCOLUMNMATRIX LBRACK expression COMMA expression RBRACK
   | STOCHASTICROWMATRIX   LBRACK expression COMMA expression RBRACK
 
-// Type constraint annotation <lower=e, upper=e> or <offset=e, multiplier=e>
 type_constraint ::= LABRACK range      RABRACK
                   | LABRACK offset_mult RABRACK
 
-// Range constraint — lower and upper may appear in either order.
 range ::= LOWER  ASSIGN constr_expression COMMA UPPER ASSIGN constr_expression
         | UPPER  ASSIGN constr_expression COMMA LOWER ASSIGN constr_expression
         | LOWER  ASSIGN constr_expression
         | UPPER  ASSIGN constr_expression
 
-// Offset / multiplier constraint — either keyword may come first.
 offset_mult ::= OFFSET     ASSIGN constr_expression COMMA MULTIPLIER ASSIGN constr_expression
               | MULTIPLIER ASSIGN constr_expression COMMA OFFSET     ASSIGN constr_expression
               | OFFSET     ASSIGN constr_expression
               | MULTIPLIER ASSIGN constr_expression
 
-// Array dimension list: array[N], array[N, M], …
 arr_dims ::= ARRAY LBRACK expression (COMMA expression)* RBRACK
 
 // ============================================================================
 // Expressions
 // ============================================================================
 // Rules are layered from lowest precedence (10) to highest (0).
-// Left-associative binary ops use (op rhs)* suffix notation.
-// Right-associative ops recurse on the right operand.
-//
-// Precedence table (Stan reference manual):
-//   10  right   ?:          conditional
-//    9  left    ||          logical or
-//    8  left    &&          logical and
-//    7  left    == !=       equality
-//    6  left    < <= > >=   relational
-//    5  left    + -         additive
-//    4  left    * .* / ./ % multiplicative
-//    3  left    \ %/%       left-division / integer division
-//    2  n/a     ! - +       unary prefix
-//    1  right   ^ .^        exponentiation
-//    0  n/a     ' .N [] ()  postfix transpose, tuple projection, indexing, calls
 
 // Precedence 10 — ternary conditional (right-associative).
-// The true- and false-branches recurse into expression to preserve right-assoc.
 expression ::= or_expr QMARK expression COLON expression
              | or_expr
 
-// stanc3's constr_expression allows only arithmeticBinOp (+ - * / %/% \ .* ./ ^ .^),
-// prefix (! - +), and postfix transpose ('). It explicitly forbids logicalBinOp
-// (|| && == != < <= > >=) and the ternary (?:). We collapse it to expression here
-// and enforce the restriction via a semantic inspection, matching stanc3's
-// constr_expression rule in parser.mly lines 627-644.
+// constr_expression is semantically restricted but syntactically identical.
 constr_expression ::= expression
 
 // Precedence 9 — logical or (left-associative)
@@ -401,7 +358,6 @@ eq_expr ::= eq_expr EQUALS  rel_expr
           | rel_expr
 
 // Precedence 6 — relational (left-associative)
-// LABRACK / RABRACK double as < / > in expression context.
 rel_expr ::= rel_expr LABRACK  add_expr
            | rel_expr LEQ      add_expr
            | rel_expr RABRACK  add_expr
@@ -426,69 +382,93 @@ ldiv_expr ::= ldiv_expr LDIVIDE unary_expr
             | ldiv_expr IDIVIDE unary_expr
             | unary_expr
 
-// Precedence 2 — unary prefix operators (non-associative; may nest: !!x, --x)
+// Precedence 2 — unary prefix operators
 unary_expr ::= BANG  unary_expr
              | MINUS unary_expr
              | PLUS  unary_expr
              | pow_expr
 
-// Precedence 1 — exponentiation (right-associative): recurse into pow_expr on the right.
+// Precedence 1 — exponentiation (right-associative)
 pow_expr ::= postfix_expr (HAT | ELTPOW) pow_expr
            | postfix_expr
 
-// Precedence 0a — postfix: transpose (') and tuple projection (.N) chain left-to-right.
+// Precedence 0a — postfix: transpose and tuple projection
 postfix_expr ::= postfix_expr TRANSPOSE
                | postfix_expr DOTNUMERAL
                | index_expr
 
-// Precedence 0b — indexing: a[i], a[i][j], … chains left-to-right.
+// Precedence 0b — indexing
 index_expr ::= index_expr LBRACK index_list RBRACK
              | primary_expr
 
 // ============================================================================
 // Primary (atomic) expressions
+// Each alternative is its own named rule so inspections get a distinct
+// element type to match against.
 // ============================================================================
 
 primary_expr ::=
-    // Parenthesised expression  (must be tested before tuple to avoid consuming the comma)
-    LPAREN expression RPAREN
-    // Tuple literal — requires ≥ 2 elements; the leading COMMA disambiguates from paren-expr.
-  | LPAREN expression COMMA expression (COMMA expression)* RPAREN
-    // Array literal  { e, e, … }
-  | LBRACE expression (COMMA expression)* RBRACE
-    // Row-vector literal  [ e, e, … ]  or empty  []
-  | LBRACK expression (COMMA expression)* RBRACK
-  | LBRACK RBRACK
-    // Built-in target() pseudo-function
-  | TARGET LPAREN RPAREN
-    // Conditional distribution call  f(y | theta, …)  — identifier must end in a conditioning suffix;
-    // that restriction is enforced by StanFunctionCallInspection, not by the parser.
-  | identifier LPAREN expression BAR (expression (COMMA expression)*)? RPAREN
-    // Ordinary function call  f(e, …)  or  f()
-  | identifier LPAREN (expression (COMMA expression)*)? RPAREN
-    // Variable reference
-  | identifier
-    // Numeric literals
-  | INTNUMERAL
-  | REALNUMERAL
-  | IMAGNUMERAL
-    // Stand-alone dot-numeral (e.g. the literal .5 in isolation — uncommon but valid)
+    paren_expr
+  | tuple_expr
+  | array_expr
+  | row_vector_expr
+  | empty_row_vector_expr
+  | target_call_expr
+  | cond_dist_expr
+  | fun_call_expr
+  | int_literal_expr
+  | real_literal_expr
+  | imag_literal_expr
   | DOTNUMERAL
+  | variable_expr
+
+// Parenthesised expression.
+paren_expr ::= LPAREN expression RPAREN
+
+// Tuple literal — ≥ 2 elements.
+// Listed BEFORE paren_expr attempts would produce ambiguity at '(' — but since
+// paren_expr is listed first and backtracks when it finds ',' after the first
+// expression, the correct rule wins for each input.
+tuple_expr ::= LPAREN expression COMMA expression (COMMA expression)* RPAREN
+
+// Array literal  { e, e, … }
+array_expr ::= LBRACE expression (COMMA expression)* RBRACE
+
+// Row-vector literal  [ e, e, … ]
+row_vector_expr ::= LBRACK expression (COMMA expression)* RBRACK
+
+// Empty row-vector literal  []
+empty_row_vector_expr ::= LBRACK RBRACK
+
+// Built-in target() pseudo-function
+target_call_expr ::= TARGET LPAREN RPAREN
+
+// Conditional distribution call  f(y | theta, …)
+// Listed before fun_call_expr; parser backtracks if no BAR is found.
+cond_dist_expr ::= ident LPAREN expression BAR (expression (COMMA expression)*)? RPAREN
+
+// Ordinary function call  f(e, …)  or  f()
+fun_call_expr ::= ident LPAREN (expression (COMMA expression)*)? RPAREN
+
+// Variable reference
+variable_expr ::= ident
+
+// Literal expressions — named so inferExprType can identify the type.
+int_literal_expr  ::= INTNUMERAL
+real_literal_expr ::= REALNUMERAL
+imag_literal_expr ::= IMAGNUMERAL
 
 // ============================================================================
 // Index expressions
 // ============================================================================
 
-// index_list allows empty slots for omitted dimensions (e.g. a[,2] means
-// "all of dim-1, second element of dim-2").  An absent index_item is the
-// "all" shorthand equivalent to a bare colon.
 index_list ::= index_item? (COMMA index_item?)*
 
-index_item ::= expression COLON expression   // bounded slice  lo:hi
-             | expression COLON              // upfrom slice   lo:
-             | COLON expression              // downto slice      :hi
-             | COLON                         // full slice        :
-             | expression                    // single element
+index_item ::= expression COLON expression
+             | expression COLON
+             | COLON expression
+             | COLON
+             | expression
 
 // ============================================================================
 // Statements
@@ -497,57 +477,74 @@ index_item ::= expression COLON expression   // bounded slice  lo:hi
 statement ::= atomic_statement | nested_statement
 
 atomic_statement ::=
-    // Assignment: lvalue := rhs.  The parser accepts any expression as lvalue;
-    // semantic inspection verifies it resolves to a valid lvalue.
-    expression assignment_op expression SEMICOLON
-    // Void function call as a statement.
-  | identifier LPAREN (expression (COMMA expression)*)? RPAREN SEMICOLON
-    // Sampling / tilde statement: y ~ dist(params) T[lo, hi]
-  | expression TILDE identifier LPAREN (expression (COMMA expression)*)? RPAREN truncation? SEMICOLON
-    // Accumulate log-probability via target or jacobian adjustment.
-  | TARGET   PLUSASSIGN expression SEMICOLON
-  | JACOBIAN PLUSASSIGN expression SEMICOLON
-    // Control-flow exits
-  | BREAK    SEMICOLON
-  | CONTINUE SEMICOLON
-    // I/O and error reporting
-  | PRINT      LPAREN printables RPAREN SEMICOLON
-  | REJECT     LPAREN printables RPAREN SEMICOLON
-  | FATAL_ERROR LPAREN printables RPAREN SEMICOLON
-    // Return
-  | RETURN expression SEMICOLON
-  | RETURN SEMICOLON
-    // Empty statement
-  | SEMICOLON
+    assignment_stmt
+  | tilde_stmt
+  | fun_call_stmt
+  | target_plus_assign_stmt
+  | jacobian_plus_assign_stmt
+  | break_stmt
+  | continue_stmt
+  | print_stmt
+  | reject_stmt
+  | fatal_error_stmt
+  | return_stmt
+  | empty_stmt
+
+// Assignment: any expression as lvalue (semantic check validates it).
+assignment_stmt ::= expression assignment_op expression SEMICOLON
+
+// Void function call as a statement.
+fun_call_stmt ::= ident LPAREN (expression (COMMA expression)*)? RPAREN SEMICOLON
+
+// Sampling / tilde statement: y ~ dist(params) T[lo, hi]
+tilde_stmt ::= expression TILDE ident LPAREN (expression (COMMA expression)*)? RPAREN truncation? SEMICOLON
+
+target_plus_assign_stmt    ::= TARGET   PLUSASSIGN expression SEMICOLON
+jacobian_plus_assign_stmt  ::= JACOBIAN PLUSASSIGN expression SEMICOLON
+break_stmt                 ::= BREAK    SEMICOLON
+continue_stmt              ::= CONTINUE SEMICOLON
+print_stmt                 ::= PRINT      LPAREN printables RPAREN SEMICOLON
+reject_stmt                ::= REJECT     LPAREN printables RPAREN SEMICOLON
+fatal_error_stmt           ::= FATAL_ERROR LPAREN printables RPAREN SEMICOLON
+return_stmt                ::= RETURN expression? SEMICOLON
+empty_stmt                 ::= SEMICOLON
 
 assignment_op ::= ASSIGN | PLUSASSIGN | MINUSASSIGN | TIMESASSIGN | DIVIDEASSIGN
                 | ELTTIMESASSIGN | ELTDIVIDEASSIGN
 
-// Printable items in print / reject / fatal_error calls.
 printables ::= printable (COMMA printable)*
 printable  ::= expression | string_literal
 
 string_literal ::= STRINGLITERAL
 
-// Truncation annotation on a tilde statement: T[lo?, hi?]
-// Either bound may be omitted (open-ended truncation).
 truncation ::= TRUNCATE LBRACK expression? COMMA expression? RBRACK
 
 nested_statement ::=
-    // if-else
-    IF LPAREN expression RPAREN vardecl_or_statement ELSE vardecl_or_statement
-  | IF LPAREN expression RPAREN vardecl_or_statement
-    // while
-  | WHILE LPAREN expression RPAREN vardecl_or_statement
-    // for over integer range:  for (i in lo : hi)
-  | FOR LPAREN identifier IN expression COLON expression RPAREN vardecl_or_statement
-    // for-each over container: for (x in container)
-  | FOR LPAREN identifier IN expression RPAREN vardecl_or_statement
-    // profile block
-  | PROFILE LPAREN string_literal RPAREN LBRACE vardecl_or_statement* RBRACE
-    // anonymous block
-  | LBRACE vardecl_or_statement* RBRACE
+    if_else_stmt
+  | if_stmt
+  | while_stmt
+  | for_range_stmt
+  | for_each_stmt
+  | profile_stmt
+  | block_stmt
+
+// if-else (try before bare if to prefer the longer match)
+if_else_stmt ::= IF LPAREN expression RPAREN vardecl_or_statement ELSE vardecl_or_statement
+if_stmt      ::= IF LPAREN expression RPAREN vardecl_or_statement
+
+while_stmt ::= WHILE LPAREN expression RPAREN vardecl_or_statement
+
+// for over integer range:  for (i in lo : hi)
+// Listed before for_each_stmt; backtracks if no COLON after the expression.
+for_range_stmt ::= FOR LPAREN ident IN expression COLON expression RPAREN vardecl_or_statement
+
+// for-each over container: for (x in container)
+for_each_stmt ::= FOR LPAREN ident IN expression RPAREN vardecl_or_statement
+
+profile_stmt ::= PROFILE LPAREN string_literal RPAREN LBRACE vardecl_or_statement* RBRACE
+
+block_stmt ::= LBRACE vardecl_or_statement* RBRACE
 
 // Dispatch helpers — which declaration form is valid depends on context.
-vardecl_or_statement     ::= statement | var_decl       // inside model block / function body
-top_vardecl_or_statement ::= statement | top_var_decl   // inside transformed_* / generated_quantities
+vardecl_or_statement     ::= statement | var_decl
+top_vardecl_or_statement ::= statement | top_var_decl

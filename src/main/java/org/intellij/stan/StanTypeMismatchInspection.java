@@ -7,16 +7,12 @@ import com.intellij.lang.ASTNode;
 import com.intellij.psi.PsiElementVisitor;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.tree.IElementType;
+import org.intellij.stan.psi.StanTypes;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 
-/**
- * Checks initializer and assignment type compatibility against the full promotion
- * rules from stanc3's UnsizedType.common_type, delegating to StanSignatureDatabase
- * for type strings and the isCompatible predicate.
- */
 public class StanTypeMismatchInspection extends LocalInspectionTool {
 
     @Override
@@ -33,34 +29,35 @@ public class StanTypeMismatchInspection extends LocalInspectionTool {
     private void checkMismatches(ASTNode node, Map<String, String> typeMap, ProblemsHolder holder) {
         IElementType t = node.getElementType();
 
-        if (t == StanElementTypes.VAR_DECL) {
+        if (t == StanTypes.VAR_DECL) {
             checkVarDeclInits(node, typeMap, holder);
-
-        } else if (t == StanElementTypes.ASSIGNMENT_STMT) {
+        } else if (t == StanTypes.ASSIGNMENT_STMT) {
             checkAssignmentStmt(node, typeMap, holder);
-            return; // we handled everything inside
+            return;
         }
 
         for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
             checkMismatches(c, typeMap, holder);
     }
 
-    // ── Declaration initializers ──────────────────────────────────────────────
+    // ── var_decl ──────────────────────────────────────────────────────────────
 
     private void checkVarDeclInits(ASTNode varDecl, Map<String, String> typeMap, ProblemsHolder holder) {
-        ASTNode typeNode = varDecl.getFirstChildNode();
+        // var_decl ::= var_type declared_var (COMMA declared_var_extra)* SEMICOLON
+        ASTNode typeNode = varDecl.getFirstChildNode(); // var_type
         if (typeNode == null) return;
         String lhsType = StanSignatureDatabase.typeNodeToString(typeNode);
-        if (lhsType == null) return; // tuple / unsized — skip
+        if (lhsType == null) return;
 
         for (ASTNode child = varDecl.getFirstChildNode(); child != null; child = child.getTreeNext()) {
-            if (child.getElementType() != StanElementTypes.DECLARED_VAR) continue;
+            IElementType ct = child.getElementType();
+            if (ct != StanTypes.DECLARED_VAR && ct != StanTypes.DECLARED_VAR_EXTRA) continue;
 
-            // Locate: first composite node after ASSIGN inside DECLARED_VAR
+            // Find the initializer: composite child after the ASSIGN token.
             boolean seenAssign = false;
             ASTNode initExpr = null;
             for (ASTNode dc = child.getFirstChildNode(); dc != null; dc = dc.getTreeNext()) {
-                if (!seenAssign && dc.getElementType() == StanTokenTypes.ASSIGN) {
+                if (!seenAssign && dc.getElementType() == StanTypes.ASSIGN) {
                     seenAssign = true;
                 } else if (seenAssign && dc.getFirstChildNode() != null) {
                     initExpr = dc;
@@ -74,55 +71,45 @@ public class StanTypeMismatchInspection extends LocalInspectionTool {
         }
     }
 
-    // ── Assignment statements ─────────────────────────────────────────────────
+    // ── assignment_stmt ───────────────────────────────────────────────────────
 
     private void checkAssignmentStmt(ASTNode stmt, Map<String, String> typeMap, ProblemsHolder holder) {
+        // assignment_stmt ::= expression assignment_op expression SEMICOLON
+        // We need the lvalue name (simple variable) and the rhs expression.
         String lhsName = null;
-        boolean lhsSubscripted = false;
+        boolean lhsComplex = false; // subscripted, tuple, etc.
         ASTNode rhsExpr = null;
         boolean seenOp = false;
 
         for (ASTNode child = stmt.getFirstChildNode(); child != null; child = child.getTreeNext()) {
             IElementType ct = child.getElementType();
             if (!seenOp) {
-                if (StanTokenTypes.ASSIGNMENT_OPS.contains(ct)) {
+                if (ct == StanTypes.ASSIGNMENT_OP) {
                     seenOp = true;
-                } else if (ct == StanTokenTypes.IDENTIFIER && lhsName == null) {
-                    lhsName = child.getText();
-                } else if (ct == StanElementTypes.INDEX_LIST || ct == StanTokenTypes.DOT) {
-                    lhsSubscripted = true; // element type differs from declared type
-                } else if (ct == StanElementTypes.TUPLE_DECL_PACK) {
-                    return; // tuple lvalue — skip
+                } else if (ct == StanTypes.VARIABLE_EXPR && lhsName == null) {
+                    lhsName = child.getText(); // variable_expr text = the identifier name
+                } else if (ct == StanTypes.INDEX_EXPR || ct == StanTypes.POSTFIX_EXPR
+                        || ct == StanTypes.TUPLE_EXPR) {
+                    lhsComplex = true;
                 }
             } else if (rhsExpr == null && child.getFirstChildNode() != null) {
                 rhsExpr = child;
             }
         }
 
-        if (lhsName == null || rhsExpr == null || lhsSubscripted) return;
+        if (lhsName == null || rhsExpr == null || lhsComplex) return;
 
         String lhsType = typeMap.get(lhsName);
-        if (lhsType == null) return; // undeclared — flagged by the undeclared-variable inspection
+        if (lhsType == null) return;
 
         String rhsType = StanSignatureDatabase.inferExprType(rhsExpr, typeMap);
         reportIfMismatch(lhsType, rhsType, rhsExpr, holder);
     }
 
-    // ── Compatibility check ───────────────────────────────────────────────────
-
-    /**
-     * Reports a problem if rhsType is known and not compatible with lhsType.
-     * Returns true when a problem was reported (callers can stop after the first).
-     */
-    private boolean reportIfMismatch(@NotNull String lhsType,
-                                     @Nullable String rhsType,
-                                     @NotNull ASTNode rhsNode,
-                                     @NotNull ProblemsHolder holder) {
-        if (rhsType == null) return false; // unknown rhs — conservative
+    private boolean reportIfMismatch(@NotNull String lhsType, @Nullable String rhsType,
+                                     @NotNull ASTNode rhsNode, @NotNull ProblemsHolder holder) {
+        if (rhsType == null) return false;
         if (StanSignatureDatabase.isCompatible(lhsType, rhsType)) return false;
-
-        // Extra gate: skip container↔container mismatches — they need full stanc analysis
-        // (e.g. ordered vs vector are compatible in Stan but our type map collapses them).
         if (!isScalar(lhsType) && !isScalar(rhsType)) return false;
 
         holder.registerProblem(rhsNode.getPsi(),

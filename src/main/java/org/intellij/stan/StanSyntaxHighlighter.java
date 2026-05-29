@@ -8,6 +8,9 @@ import com.intellij.openapi.editor.colors.TextAttributesKey;
 import com.intellij.openapi.fileTypes.SyntaxHighlighterBase;
 import com.intellij.psi.TokenType;
 import com.intellij.psi.tree.IElementType;
+import com.intellij.psi.tree.TokenSet;
+import org.intellij.stan.lexer.StanLexer;
+import org.intellij.stan.psi.StanTypes;
 import org.jetbrains.annotations.NotNull;
 
 import static com.intellij.openapi.editor.colors.TextAttributesKey.createTextAttributesKey;
@@ -47,10 +50,54 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
     public static final TextAttributesKey BAD_CHARACTER =
         createTextAttributesKey("STAN_BAD_CHARACTER",  HighlighterColors.BAD_CHARACTER);
 
+    // Control-flow keywords
+    private static final TokenSet KEYWORD_TOKENS = TokenSet.create(
+        StanTypes.RETURN, StanTypes.IF, StanTypes.ELSE, StanTypes.WHILE,
+        StanTypes.FOR, StanTypes.IN, StanTypes.BREAK, StanTypes.CONTINUE,
+        StanTypes.PROFILE, StanTypes.PRINT, StanTypes.REJECT, StanTypes.FATAL_ERROR,
+        StanTypes.TARGET, StanTypes.JACOBIAN
+    );
+
+    // Block-name keywords (multi-word tokens from the flex lexer)
+    private static final TokenSet BLOCK_KEYWORD_TOKENS = TokenSet.create(
+        StanTypes.FUNCTIONBLOCK, StanTypes.DATABLOCK, StanTypes.PARAMETERSBLOCK,
+        StanTypes.MODELBLOCK, StanTypes.TRANSFORMEDDATABLOCK,
+        StanTypes.TRANSFORMEDPARAMETERSBLOCK, StanTypes.GENERATEDQUANTITIESBLOCK
+    );
+
+    // Primitive and constrained type keywords
+    private static final TokenSet TYPE_TOKENS = TokenSet.create(
+        StanTypes.VOID, StanTypes.INT, StanTypes.REAL, StanTypes.COMPLEX,
+        StanTypes.VECTOR, StanTypes.ROWVECTOR, StanTypes.MATRIX,
+        StanTypes.COMPLEXVECTOR, StanTypes.COMPLEXROWVECTOR, StanTypes.COMPLEXMATRIX,
+        StanTypes.ARRAY, StanTypes.TUPLE,
+        StanTypes.ORDERED, StanTypes.POSITIVEORDERED, StanTypes.SIMPLEX,
+        StanTypes.UNITVECTOR, StanTypes.SUMTOZEROVEC, StanTypes.SUMTOZEROMAT,
+        StanTypes.CHOLESKYFACTORCORR, StanTypes.CHOLESKYFACTORCOV,
+        StanTypes.CORRMATRIX, StanTypes.COVMATRIX,
+        StanTypes.STOCHASTICCOLUMNMATRIX, StanTypes.STOCHASTICROWMATRIX,
+        // constraint sub-keywords also colour as type
+        StanTypes.LOWER, StanTypes.UPPER, StanTypes.OFFSET, StanTypes.MULTIPLIER
+    );
+
+    // All operator tokens
+    private static final TokenSet OPERATOR_TOKENS = TokenSet.create(
+        StanTypes.PLUS, StanTypes.MINUS, StanTypes.TIMES, StanTypes.DIVIDE,
+        StanTypes.MODULO, StanTypes.IDIVIDE, StanTypes.LDIVIDE,
+        StanTypes.ELTTIMES, StanTypes.ELTDIVIDE, StanTypes.HAT, StanTypes.ELTPOW,
+        StanTypes.OR, StanTypes.AND, StanTypes.EQUALS, StanTypes.NEQUALS,
+        StanTypes.LABRACK, StanTypes.LEQ, StanTypes.RABRACK, StanTypes.GEQ,
+        StanTypes.BANG, StanTypes.TRANSPOSE,
+        StanTypes.ASSIGN, StanTypes.PLUSASSIGN, StanTypes.MINUSASSIGN,
+        StanTypes.TIMESASSIGN, StanTypes.DIVIDEASSIGN,
+        StanTypes.ELTTIMESASSIGN, StanTypes.ELTDIVIDEASSIGN,
+        StanTypes.TILDE, StanTypes.BAR, StanTypes.COLON, StanTypes.QMARK,
+        StanTypes.DOTNUMERAL  // tuple projection operator
+    );
+
     private static final TextAttributesKey[] KEYWORD_KEYS       = {KEYWORD};
     private static final TextAttributesKey[] BLOCK_KEYWORD_KEYS = {BLOCK_KEYWORD};
     private static final TextAttributesKey[] TYPE_KEYS          = {TYPE};
-    private static final TextAttributesKey[] BUILTIN_KEYS       = {BUILTIN_FUNCTION};
     private static final TextAttributesKey[] NUMBER_KEYS        = {NUMBER};
     private static final TextAttributesKey[] STRING_KEYS        = {STRING};
     private static final TextAttributesKey[] LINE_COMMENT_KEYS  = {LINE_COMMENT};
@@ -61,54 +108,35 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
     private static final TextAttributesKey[] PARENS_KEYS        = {PARENTHESES};
     private static final TextAttributesKey[] SEMICOLON_KEYS     = {SEMICOLON};
     private static final TextAttributesKey[] COMMA_KEYS         = {COMMA};
-    private static final TextAttributesKey[] RESERVED_KEYS      = {RESERVED};
     private static final TextAttributesKey[] BAD_CHAR_KEYS      = {BAD_CHARACTER};
     private static final TextAttributesKey[] EMPTY_KEYS         = {};
 
-    @NotNull
     @Override
-    public Lexer getHighlightingLexer() {
+    public @NotNull Lexer getHighlightingLexer() {
         return new StanLexer();
     }
 
     @Override
     public TextAttributesKey @NotNull [] getTokenHighlights(IElementType t) {
-        // ---- Control-flow keywords ----
-        if (StanTokenTypes.KEYWORDS.contains(t))            return KEYWORD_KEYS;
+        if (KEYWORD_TOKENS.contains(t))       return KEYWORD_KEYS;
+        if (BLOCK_KEYWORD_TOKENS.contains(t)) return BLOCK_KEYWORD_KEYS;
+        if (TYPE_TOKENS.contains(t))          return TYPE_KEYS;
 
-        // ---- Block keywords ----
-        if (StanTokenTypes.BLOCK_KEYWORDS.contains(t))      return BLOCK_KEYWORD_KEYS;
+        if (t == StanTypes.INTNUMERAL || t == StanTypes.REALNUMERAL || t == StanTypes.IMAGNUMERAL)
+            return NUMBER_KEYS;
+        if (t == StanTypes.STRINGLITERAL)     return STRING_KEYS;
+        if (t == StanTypes.LINE_COMMENT)      return LINE_COMMENT_KEYS;
+        if (t == StanTypes.BLOCK_COMMENT)     return BLOCK_COMMENT_KEYS;
 
-        // ---- Type keywords (primitive + constrained + constraint sub-keywords) ----
-        if (StanTokenTypes.TYPE_KEYWORDS.contains(t))       return TYPE_KEYS;
-        if (StanTokenTypes.CONSTRAINT_KEYWORDS.contains(t)) return TYPE_KEYS;
+        if (OPERATOR_TOKENS.contains(t))      return OPERATOR_KEYS;
 
-        // ---- Identifiers ----
-        if (t == StanTokenTypes.BUILTIN_FUNCTION)           return BUILTIN_KEYS;
-        if (t == StanTokenTypes.RESERVED)                   return RESERVED_KEYS;
+        if (t == StanTypes.LBRACE || t == StanTypes.RBRACE)   return BRACES_KEYS;
+        if (t == StanTypes.LBRACK || t == StanTypes.RBRACK)   return BRACKETS_KEYS;
+        if (t == StanTypes.LPAREN || t == StanTypes.RPAREN)   return PARENS_KEYS;
+        if (t == StanTypes.SEMICOLON)                          return SEMICOLON_KEYS;
+        if (t == StanTypes.COMMA)                              return COMMA_KEYS;
 
-        // ---- Literals ----
-        if (StanTokenTypes.NUMBER_LITERALS.contains(t))     return NUMBER_KEYS;
-        if (t == StanTokenTypes.STRING_LITERAL)             return STRING_KEYS;
-
-        // ---- Comments ----
-        if (t == StanTokenTypes.LINE_COMMENT)               return LINE_COMMENT_KEYS;
-        if (t == StanTokenTypes.BLOCK_COMMENT)              return BLOCK_COMMENT_KEYS;
-
-        // ---- Operators (all individual operator tokens share one colour slot) ----
-        if (StanTokenTypes.ALL_OPERATORS.contains(t))       return OPERATOR_KEYS;
-        // DOT is used for tuple projection — treat as operator
-        if (t == StanTokenTypes.DOT)                        return OPERATOR_KEYS;
-
-        // ---- Punctuation ----
-        if (t == StanTokenTypes.LBRACE  || t == StanTokenTypes.RBRACE)   return BRACES_KEYS;
-        if (t == StanTokenTypes.LBRACKET || t == StanTokenTypes.RBRACKET) return BRACKETS_KEYS;
-        if (t == StanTokenTypes.LPAREN  || t == StanTokenTypes.RPAREN)   return PARENS_KEYS;
-        if (t == StanTokenTypes.SEMICOLON)                  return SEMICOLON_KEYS;
-        if (t == StanTokenTypes.COMMA)                      return COMMA_KEYS;
-
-        // ---- Errors ----
-        if (t == TokenType.BAD_CHARACTER)                   return BAD_CHAR_KEYS;
+        if (t == TokenType.BAD_CHARACTER)     return BAD_CHAR_KEYS;
 
         return EMPTY_KEYS;
     }
