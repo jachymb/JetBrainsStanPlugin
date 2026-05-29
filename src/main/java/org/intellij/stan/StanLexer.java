@@ -88,132 +88,18 @@ public class StanLexer extends LexerBase {
         KEYWORD_MAP.put("multiplier", StanTokenTypes.MULTIPLIER_KW);
         KEYWORD_MAP.put("T",          StanTokenTypes.TRUNCATE_KW);
 
-        // ---- Built-in functions ----
+        // ---- Built-in functions from the signature database ----
         // putIfAbsent so that keywords defined above always win.
-        String[] builtins = {
-            // Basic math
-            "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh",
-            "cbrt", "ceil", "cos", "cosh", "exp", "exp2", "expm1",
-            "fabs", "floor", "hypot",
-            "inv", "inv_cloglog", "inv_logit", "inv_sqrt", "inv_square", "inv_Phi",
-            "is_inf", "is_nan", "ldexp", "lgamma",
-            "log", "log1m", "log1m_exp", "log1m_inv_logit",
-            "log1p", "log1p_exp", "log2", "log10",
-            "log_diff_exp", "log_inv_logit", "log_inv_logit_diff", "log_mix",
-            "log_softmax", "log_sum_exp", "logit", "lmultiply",
-            "Phi", "Phi_approx",
-            "pow", "round", "sin", "sinh", "softmax", "sqrt", "square",
-            "step", "tan", "tanh", "tgamma", "trunc",
-            "fma", "fmax", "fmin", "fmod", "fdim",
-            "lbeta", "binary_log_loss", "owens_t",
-            "erf", "erfc", "inv_erfc",
-            "inc_beta", "inv_inc_beta",
-            "log_falling_factorial", "log_rising_factorial",
-            "log_modified_bessel_first_kind",
-            "modified_bessel_first_kind", "modified_bessel_second_kind",
-            "bessel_first_kind", "bessel_second_kind",
-            "falling_factorial", "rising_factorial",
-            "lchoose", "choose",
-            "digamma", "trigamma", "lmgamma", "gamma_p", "gamma_q",
-            "lambert_w0", "lambert_wm1",
-            "std_normal_qf", "std_normal_log_qf",
-            // Complex number functions
-            "to_complex", "get_real", "get_imag", "conj", "arg", "polar", "proj",
-            // Numeric constants (nullary functions)
-            "e", "pi", "sqrt2", "machine_precision",
-            "not_a_number", "positive_infinity", "negative_infinity",
-            // Integer / array utilities
-            "max", "min", "sum", "prod", "mean", "variance", "sd",
-            "num_elements", "size", "dims", "int_step", "to_int",
-            "append_array", "rep_array",
-            "zeros_array", "zeros_int_array", "zeros_row_vector", "zeros_vector",
-            "ones_array", "ones_int_array", "ones_row_vector", "ones_vector",
-            "one_hot_array", "one_hot_int_array", "one_hot_row_vector", "one_hot_vector",
-            "linspaced_array", "linspaced_int_array", "linspaced_row_vector", "linspaced_vector",
-            "uniform_simplex",
-            "head", "tail", "segment", "reverse",
-            "sort_asc", "sort_desc", "sort_indices_asc", "sort_indices_desc",
-            "rank", "to_array_1d", "to_array_2d", "quantile",
-            // Matrix functions
-            "add_diag", "append_col", "append_row", "block",
-            "chol2inv", "cholesky_decompose",
-            "col", "cols", "columns_dot_product", "columns_dot_self",
-            "crossprod", "tcrossprod", "cumulative_sum",
-            "determinant", "log_determinant", "log_determinant_spd",
-            "diag_matrix", "diag_post_multiply", "diag_pre_multiply", "diagonal",
-            "distance", "squared_distance", "dot_product", "dot_self",
-            "eigendecompose", "eigendecompose_sym",
-            "eigenvalues", "eigenvalues_sym", "eigenvectors", "eigenvectors_sym",
-            "generalized_inverse", "identity_matrix", "inverse", "inverse_spd",
-            "kronecker_product",
-            "matrix_exp", "matrix_exp_multiply", "matrix_power",
-            "mdivide_left", "mdivide_left_spd", "mdivide_left_tri_low",
-            "mdivide_right", "mdivide_right_spd", "mdivide_right_tri_low",
-            "multiply_lower_tri_self_transpose",
-            "norm", "norm1", "norm2",
-            "quad_form", "quad_form_diag", "quad_form_sym",
-            "qr_Q", "qr_R", "qr_thin_Q", "qr_thin_R",
-            "rep_matrix", "rep_row_vector", "rep_vector",
-            "row", "rows", "rows_dot_product", "rows_dot_self",
-            "scale_matrix_exp_multiply", "singular_values",
-            "sub_col", "sub_row", "svd_U", "svd_V",
-            "symmetrize_from_lower_tri",
-            "to_matrix", "to_row_vector", "to_vector",
-            "trace", "trace_dot", "trace_gen_quad_form", "trace_quad_form",
-            "transpose",
-            // Complex Schur decomposition
-            "complex_schur_decompose", "complex_schur_decompose_t", "complex_schur_decompose_u",
-            // FFT
-            "fft", "fft2", "inv_fft", "inv_fft2",
-            // Sparse matrix
-            "csr_extract_w", "csr_extract_v", "csr_extract_u",
-            "csr_to_dense_matrix", "csr_matrix_times_vector",
-            // Gaussian process covariance functions
-            "gp_dot_prod_cov", "gp_exp_quad_cov", "gp_exponential_cov",
-            "gp_matern32_cov", "gp_matern52_cov", "gp_periodic_cov",
-            // HMM functions
-            "hmm_hidden_state_prob", "hmm_marginal",
-            // ODE solvers
-            "ode_adams", "ode_adams_tol",
-            "ode_bdf", "ode_bdf_tol",
-            "ode_ckrk", "ode_ckrk_tol",
-            "ode_rk45", "ode_rk45_tol",
-            "ode_adjoint_tol_ctl",
-            // DAE solvers
-            "dae", "dae_tol",
-            // Algebraic solvers
-            "algebra_solver", "algebra_solver_newton",
-            "solve_newton", "solve_newton_tol",
-            "solve_powell", "solve_powell_tol",
-            // 1-D integration / map-reduce
-            "integrate_1d",
-            "map_rect", "reduce_sum", "reduce_sum_static", "partial_sum",
-            // RNG functions
-            "bernoulli_rng", "bernoulli_logit_rng",
-            "beta_rng", "beta_binomial_rng", "beta_neg_binomial_rng", "beta_proportion_rng",
-            "binomial_rng", "categorical_rng", "categorical_logit_rng",
-            "cauchy_rng", "chi_square_rng",
-            "dirichlet_rng", "dirichlet_multinomial_rng", "discrete_range_rng",
-            "double_exponential_rng", "exp_mod_normal_rng", "exponential_rng",
-            "frechet_rng", "gamma_rng", "gumbel_rng", "hmm_latent_rng",
-            "hypergeometric_rng", "inv_chi_square_rng", "inv_gamma_rng",
-            "inv_wishart_rng", "inv_wishart_cholesky_rng",
-            "lkj_corr_rng", "lkj_corr_cholesky_rng",
-            "logistic_rng", "loglogistic_rng", "lognormal_rng",
-            "multinomial_rng", "multinomial_logit_rng",
-            "multi_normal_rng", "multi_normal_cholesky_rng", "multi_normal_prec_rng",
-            "multi_student_t_rng", "multi_student_t_cholesky_rng",
-            "neg_binomial_rng", "neg_binomial_2_rng", "neg_binomial_2_log_rng",
-            "normal_rng", "ordered_logistic_rng", "ordered_probit_rng",
-            "pareto_rng", "pareto_type_2_rng",
-            "poisson_rng", "poisson_log_rng",
-            "rayleigh_rng", "scaled_inv_chi_square_rng",
-            "skew_normal_rng", "skew_double_exponential_rng",
-            "std_normal_rng", "student_t_rng",
-            "uniform_rng", "von_mises_rng", "weibull_rng", "wiener_rng",
-            "wishart_rng", "wishart_cholesky_rng",
-            "yule_simon_rng",
-            // Distribution base names
+        // Distribution suffix variants (_lupdf/_lupmf) are also included.
+        for (String name : StanSignatureDatabase.getInstance().getFunctionNames()) {
+            KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
+        }
+        for (String name : StanSignatureDatabase.getInstance().getDistributionFunctionNames()) {
+            KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
+        }
+
+        // ---- Distribution base names (bare stems not in the DB as full signatures) ----
+        String[] distBaseNames = {
             "bernoulli", "bernoulli_logit", "bernoulli_logit_glm",
             "beta", "beta_binomial", "beta_neg_binomial", "beta_proportion",
             "binomial", "binomial_logit", "binomial_logit_glm",
@@ -241,18 +127,13 @@ public class StanLexer extends LexerBase {
             "std_normal", "student_t",
             "uniform", "von_mises", "weibull", "wiener",
             "wishart", "wishart_cholesky", "yule_simon",
-            // Deprecated / legacy
+            // Deprecated / legacy names no longer in the DB
             "lkj_cov",
             "integrate_ode", "integrate_ode_rk45", "integrate_ode_bdf", "integrate_ode_adams",
             "get_lp", "increment_log_prob",
         };
-        for (String b : builtins) {
+        for (String b : distBaseNames) {
             KEYWORD_MAP.putIfAbsent(b, StanTokenTypes.BUILTIN_FUNCTION);
-        }
-
-        // ---- Distribution suffixed functions from signature database (_lpdf/_lpmf/_lcdf/_lccdf) ----
-        for (String name : StanSignatureDatabase.getInstance().getDistributionFunctionNames()) {
-            KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
 
         // ---- Reserved words (C++ keywords forbidden as Stan identifiers) ----

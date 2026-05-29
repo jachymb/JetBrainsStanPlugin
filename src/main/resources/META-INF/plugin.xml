@@ -46,6 +46,10 @@
         <colorSettingsPage
             implementation="org.intellij.stan.StanColorSettingsPage"/>
 
+        <completion.contributor
+            language="Stan"
+            implementationClass="org.intellij.stan.StanCompletionContributor"/>
+
         <localInspection
             language="Stan"
             displayName="Reserved word used as identifier"
@@ -93,5 +97,13 @@
             implementationClass="org.intellij.stan.StanUnusedVariableInspection"
             enabledByDefault="true"
             level="WARNING"/>
+
+        <localInspection
+            language="Stan"
+            displayName="_rng function called outside allowed context"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanRngCallContextInspection"
+            enabledByDefault="true"
+            level="ERROR"/>
     </extensions>
 </idea-plugin>

@@ -123,15 +123,11 @@ public class StanTypeMismatchInspection extends LocalInspectionTool {
 
         // Extra gate: skip container↔container mismatches — they need full stanc analysis
         // (e.g. ordered vs vector are compatible in Stan but our type map collapses them).
-        if (!isScalar(lhsType) && !isScalar(rhsType)) return false;
+        if (!StanSignatureDatabase.isScalarType(lhsType) && !StanSignatureDatabase.isScalarType(rhsType)) return false;
 
         holder.registerProblem(rhsNode.getPsi(),
                 "Type mismatch: cannot assign " + rhsType + " to " + lhsType,
                 ProblemHighlightType.GENERIC_ERROR);
         return true;
-    }
-
-    private static boolean isScalar(String t) {
-        return "int".equals(t) || "real".equals(t) || "complex".equals(t);
     }
 }

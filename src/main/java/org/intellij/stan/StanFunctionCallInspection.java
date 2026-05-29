@@ -39,31 +39,53 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
     /** Collect all function names declared/defined in the functions block. */
     private Set<String> collectUserDefinedFunctions(ASTNode root) {
         Set<String> names = new HashSet<>();
-        collectUserFunctionsRec(root, names);
-        return names;
-    }
-
-    private void collectUserFunctionsRec(ASTNode node, Set<String> names) {
-        if (node.getElementType() == StanElementTypes.FUN_DEF) {
-            // The function name is the first IDENTIFIER or BUILTIN_FUNCTION child
-            // before the LPAREN. The return type only contains type keywords/nodes.
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.LPAREN) break;
-                if (c.getElementType() == StanTokenTypes.IDENTIFIER
-                        || c.getElementType() == StanTokenTypes.BUILTIN_FUNCTION) {
-                    names.add(c.getText());
-                    break;
+        Deque<ASTNode> stack = new ArrayDeque<>();
+        stack.push(root);
+        while (!stack.isEmpty()) {
+            ASTNode node = stack.pop();
+            if (node.getElementType() == StanElementTypes.FUN_DEF) {
+                // The function name is the first IDENTIFIER or BUILTIN_FUNCTION child before LPAREN.
+                for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+                    if (c.getElementType() == StanTokenTypes.LPAREN) break;
+                    if (c.getElementType() == StanTokenTypes.IDENTIFIER
+                            || c.getElementType() == StanTokenTypes.BUILTIN_FUNCTION) {
+                        names.add(c.getText());
+                        break;
+                    }
                 }
+                continue; // no nested function definitions in Stan
             }
-            return; // no nested function definitions in Stan
+            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
+                stack.push(c);
         }
-        for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
-            collectUserFunctionsRec(c, names);
+        return names;
     }
 
     private void checkCalls(ASTNode node, Map<String, String> typeMap,
                             Set<String> userFunctions, ProblemsHolder holder) {
         IElementType t = node.getElementType();
+
+        if (t == StanElementTypes.FUN_DEF) {
+            // Function bodies are isolated: they can only access their own parameters,
+            // not variables from data/parameters/model blocks.
+            Map<String, String> localMap = StanSignatureDatabase.buildFunctionParamMap(node);
+            for (ASTNode child = node.getFirstChildNode(); child != null; child = child.getTreeNext())
+                checkCalls(child, localMap, userFunctions, holder);
+            return;
+        }
+
+        // A BUILTIN_FUNCTION token inside VARIABLE_EXPR means the function name was written
+        // without a call — e.g. `int a = falling_factorial`.  Functions are not values in Stan.
+        if (t == StanElementTypes.VARIABLE_EXPR) {
+            ASTNode first = node.getFirstChildNode();
+            if (first != null && first.getElementType() == StanTokenTypes.BUILTIN_FUNCTION) {
+                holder.registerProblem(first.getPsi(),
+                        "'" + first.getText() + "' is a function and cannot be used as a value; did you forget '(...)'?",
+                        ProblemHighlightType.GENERIC_ERROR);
+                return; // no point recursing into this leaf
+            }
+        }
+
         if (t == StanElementTypes.FUN_CALL_EXPR || t == StanElementTypes.COND_DIST_EXPR) {
             checkSingleCall(node, typeMap, userFunctions, holder);
             // still recurse — calls can be nested inside argument expressions
@@ -86,7 +108,7 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
         if (callNode.getElementType() == StanElementTypes.FUN_CALL_EXPR
                 && (nameType == StanTokenTypes.BUILTIN_FUNCTION || nameType == StanTokenTypes.IDENTIFIER)
                 && StanParser.hasConditioningSuffix(fnName)) {
-            List<ASTNode> condArgExprs = collectArgExprs(callNode);
+            List<ASTNode> condArgExprs = StanSignatureDatabase.collectArgExprs(callNode);
             if (condArgExprs.size() >= 2) {
                 holder.registerProblem(nameToken.getPsi(),
                         "'" + fnName + "' requires conditional notation: " + fnName + "(sample | params)",
@@ -112,7 +134,7 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
         // The first ARG_LIST is what comes before |, the second is after.
         // In stanc these are combined: f_lpdf(y | mu, sigma) = f_lpdf(args_before | args_after).
         // We just treat all args as a flat list for arity checking.
-        List<ASTNode> argExprs = collectArgExprs(callNode);
+        List<ASTNode> argExprs = StanSignatureDatabase.collectArgExprs(callNode);
         int actualArity = argExprs.size();
 
         List<StanSignatureDatabase.Signature> sigs = db.getSignatures(fnName);
@@ -191,22 +213,5 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
             if (!StanSignatureDatabase.isCompatible(sig.args.get(i), actual)) return false;
         }
         return true;
-    }
-
-    /**
-     * Collect all expression arguments from a FUN_CALL_EXPR or COND_DIST_EXPR.
-     * For COND_DIST_EXPR the args before and after | are both included.
-     */
-    private List<ASTNode> collectArgExprs(ASTNode callNode) {
-        List<ASTNode> result = new ArrayList<>();
-        for (ASTNode child = callNode.getFirstChildNode(); child != null; child = child.getTreeNext()) {
-            if (child.getElementType() == StanElementTypes.ARG_LIST) {
-                for (ASTNode c = child.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                    if (c.getFirstChildNode() != null) // composite node = expression
-                        result.add(c);
-                }
-            }
-        }
-        return result;
     }
 }
