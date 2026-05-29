@@ -15,6 +15,18 @@ import org.jetbrains.annotations.NotNull;
  */
 public class StanParser implements PsiParser {
 
+    // Suffixes that allow the conditional-distribution bar notation: f(y | theta)
+    // Source: stanc3 src/middle/Utils.ml conditioning_suffices
+    static final String[] CONDITIONING_SUFFIXES =
+        {"_lpdf", "_lupdf", "_lpmf", "_lupmf", "_cdf", "_lcdf", "_lccdf"};
+
+    static boolean hasConditioningSuffix(String name) {
+        if (name == null) return false;
+        for (String s : CONDITIONING_SUFFIXES)
+            if (name.endsWith(s)) return true;
+        return false;
+    }
+
     private PsiBuilder builder;
 
     @Override
@@ -1153,21 +1165,7 @@ public class StanParser implements PsiParser {
      * We use marker rollback for disambiguation.
      */
     private void parseExpressionStatement() {
-        // First try: function call statement (name '(' args ')' ';')
-        if (isName()) {
-            PsiBuilder.Marker probe = builder.mark();
-            String name = builder.getTokenText();
-            advance(); // name
-            if (at(StanTokenTypes.LPAREN)) {
-                // Could be FUN_CALL_STMT — commit and parse
-                probe.rollbackTo();
-                parseFunCallStatement();
-                return;
-            }
-            probe.rollbackTo();
-        }
-
-        // Second try: assignment (lvalue assignOp expr) or tilde
+        // Try: assignment (lvalue assignOp expr) or tilde or function-call statement.
         // We parse the expression and then check what follows.
         PsiBuilder.Marker outerMark = builder.mark();
         // Parse as lvalue attempt
@@ -1308,16 +1306,14 @@ public class StanParser implements PsiParser {
     // Truncation
     // -------------------------------------------------------------------------
 
-    /** truncation: IDENTIFIER{T} '[' expr? ',' expr? ']' */
+    /** truncation: TRUNCATE_KW '[' expr? ',' expr? ']' */
     private boolean isTruncationStart() {
-        if (!at(StanTokenTypes.IDENTIFIER)) return false;
-        String text = builder.getTokenText();
-        return "T".equals(text);
+        return at(StanTokenTypes.TRUNCATE_KW);
     }
 
     private void parseTruncation() {
         PsiBuilder.Marker m = builder.mark();
-        advance(); // IDENTIFIER 'T'
+        advance(); // TRUNCATE_KW 'T'
         expect(StanTokenTypes.LBRACKET, "'[' expected for truncation");
         // optional lower bound
         if (!at(StanTokenTypes.COMMA)) {
@@ -1610,13 +1606,20 @@ public class StanParser implements PsiParser {
      */
     private void parseNameAtom() {
         PsiBuilder.Marker m = builder.mark();
+        String fnName = builder.getTokenText();
         advance(); // name
         if (at(StanTokenTypes.LPAREN)) {
             advance(); // '('
             parseArgList();
             if (at(StanTokenTypes.BAR)) {
-                // conditional distribution: f(x | params)
-                advance(); // '|'
+                if (!hasConditioningSuffix(fnName)) {
+                    PsiBuilder.Marker errMark = builder.mark();
+                    advance(); // '|'
+                    errMark.error("'|' notation is only allowed in functions with a conditioning suffix "
+                            + "(_lpdf, _lpmf, _cdf, _lcdf, _lccdf)");
+                } else {
+                    advance(); // '|'
+                }
                 parseArgList();
                 expect(StanTokenTypes.RPAREN, "')' expected");
                 m.done(StanElementTypes.COND_DIST_EXPR);

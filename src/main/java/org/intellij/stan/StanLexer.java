@@ -86,6 +86,7 @@ public class StanLexer extends LexerBase {
         KEYWORD_MAP.put("upper",      StanTokenTypes.UPPER_KW);
         KEYWORD_MAP.put("offset",     StanTokenTypes.OFFSET_KW);
         KEYWORD_MAP.put("multiplier", StanTokenTypes.MULTIPLIER_KW);
+        KEYWORD_MAP.put("T",          StanTokenTypes.TRUNCATE_KW);
 
         // ---- Built-in functions ----
         // putIfAbsent so that keywords defined above always win.
@@ -240,10 +241,6 @@ public class StanLexer extends LexerBase {
             "std_normal", "student_t",
             "uniform", "von_mises", "weibull", "wiener",
             "wishart", "wishart_cholesky", "yule_simon",
-            // Truncation indicator
-            "T",
-            // Explicit lpdf / lpmf / lcdf / lccdf names
-            "normal_lpdf", "normal_lpmf", "normal_lcdf", "normal_lccdf",
             // Deprecated / legacy
             "lkj_cov",
             "integrate_ode", "integrate_ode_rk45", "integrate_ode_bdf", "integrate_ode_adams",
@@ -251,6 +248,11 @@ public class StanLexer extends LexerBase {
         };
         for (String b : builtins) {
             KEYWORD_MAP.putIfAbsent(b, StanTokenTypes.BUILTIN_FUNCTION);
+        }
+
+        // ---- Distribution suffixed functions from signature database (_lpdf/_lpmf/_lcdf/_lccdf) ----
+        for (String name : StanSignatureDatabase.getInstance().getDistributionFunctionNames()) {
+            KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
 
         // ---- Reserved words (C++ keywords forbidden as Stan identifiers) ----

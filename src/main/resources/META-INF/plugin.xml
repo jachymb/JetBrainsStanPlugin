@@ -72,6 +72,22 @@
 
         <localInspection
             language="Stan"
+            displayName="Function call type/arity mismatch"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanFunctionCallInspection"
+            enabledByDefault="true"
+            level="ERROR"/>
+
+        <localInspection
+            language="Stan"
+            displayName="Type mismatch"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanTypeMismatchInspection"
+            enabledByDefault="true"
+            level="ERROR"/>
+
+        <localInspection
+            language="Stan"
             displayName="Unused variable"
             groupName="Stan"
             implementationClass="org.intellij.stan.StanUnusedVariableInspection"

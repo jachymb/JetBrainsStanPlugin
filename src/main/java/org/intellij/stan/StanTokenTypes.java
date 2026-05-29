@@ -76,6 +76,9 @@ public interface StanTokenTypes {
     IElementType OFFSET_KW     = new StanTokenType("offset");
     IElementType MULTIPLIER_KW = new StanTokenType("multiplier");
 
+    // ---- Truncation keyword ----
+    IElementType TRUNCATE_KW   = new StanTokenType("T");
+
     // ---- Arithmetic operators ----
     IElementType PLUS    = new StanTokenType("PLUS");    // +
     IElementType MINUS   = new StanTokenType("MINUS");   // -
