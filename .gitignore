@@ -3,6 +3,7 @@ chain.crt
 token.txt
 runIde.log
 gradle/wrapper/gradle-wrapper.jar
+notes.txt
 
 build/
 .idea/

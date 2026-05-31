@@ -79,9 +79,10 @@ public class StanSyntaxHighlighter extends SyntaxHighlighterBase {
         // ---- Block keywords ----
         if (StanTokenTypes.BLOCK_KEYWORDS.contains(t))      return BLOCK_KEYWORD_KEYS;
 
-        // ---- Type keywords (primitive + constrained + constraint sub-keywords) ----
+        // ---- Type keywords (primitive + constrained types) ----
         if (StanTokenTypes.TYPE_KEYWORDS.contains(t))       return TYPE_KEYS;
-        if (StanTokenTypes.CONSTRAINT_KEYWORDS.contains(t)) return TYPE_KEYS;
+        // ---- Constraint sub-keywords (lower, upper, offset, multiplier) ----
+        if (StanTokenTypes.CONSTRAINT_KEYWORDS.contains(t)) return KEYWORD_KEYS;
 
         // ---- Identifiers ----
         if (t == StanTokenTypes.BUILTIN_FUNCTION)           return BUILTIN_KEYS;
