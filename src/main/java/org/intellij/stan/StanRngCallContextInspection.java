@@ -45,28 +45,15 @@ public class StanRngCallContextInspection extends LocalInspectionTool {
         IElementType t = node.getElementType();
 
         // On entering any top-level block, update enclosingBlock and reset inRngFunction.
-        if (t == StanElementTypes.FUNCTIONS_BLOCK
-                || t == StanElementTypes.DATA_BLOCK
-                || t == StanElementTypes.TRANSFORMED_DATA_BLOCK
-                || t == StanElementTypes.PARAMETERS_BLOCK
-                || t == StanElementTypes.TRANSFORMED_PARAMETERS_BLOCK
-                || t == StanElementTypes.MODEL_BLOCK
-                || t == StanElementTypes.GENERATED_QUANTITIES_BLOCK) {
+        if (StanElementTypes.BLOCK_TYPES.contains(t)) {
             recurse(node, t, false, holder);
             return;
         }
 
         // On entering a function definition, determine whether it is an _rng function.
         if (t == StanElementTypes.FUN_DEF) {
-            boolean isRng = false;
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.LPAREN) break;
-                IElementType ct = c.getElementType();
-                if (ct == StanTokenTypes.IDENTIFIER || ct == StanTokenTypes.BUILTIN_FUNCTION) {
-                    isRng = c.getText().endsWith("_rng");
-                    break;
-                }
-            }
+            ASTNode nameToken = StanSignatureDatabase.funDefNameToken(node);
+            boolean isRng = nameToken != null && nameToken.getText().endsWith("_rng");
             recurse(node, enclosingBlock, isRng, holder);
             return;
         }
@@ -76,8 +63,7 @@ public class StanRngCallContextInspection extends LocalInspectionTool {
             ASTNode nameToken = node.getFirstChildNode();
             if (nameToken != null) {
                 IElementType nt = nameToken.getElementType();
-                if ((nt == StanTokenTypes.BUILTIN_FUNCTION || nt == StanTokenTypes.IDENTIFIER)
-                        && nameToken.getText().endsWith("_rng")) {
+                if (StanTokenTypes.IDENTIFIERS.contains(nt) && nameToken.getText().endsWith("_rng")) {
                     boolean allowed = inRngFunction || ALLOWED_BLOCKS.contains(enclosingBlock);
                     if (!allowed) {
                         holder.registerProblem(nameToken.getPsi(),

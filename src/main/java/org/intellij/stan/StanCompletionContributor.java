@@ -1,7 +1,9 @@
 package org.intellij.stan;
 
 import com.intellij.codeInsight.completion.*;
+import com.intellij.codeInsight.lookup.LookupElement;
 import com.intellij.codeInsight.lookup.LookupElementBuilder;
+import com.intellij.openapi.editor.Document;
 import com.intellij.lang.ASTNode;
 import com.intellij.patterns.PlatformPatterns;
 import com.intellij.psi.PsiElement;
@@ -13,16 +15,25 @@ import com.intellij.util.ProcessingContext;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class StanCompletionContributor extends CompletionContributor {
 
-    private static final List<String> BLOCK_COMPLETIONS = Arrays.asList(
+    private static final List<String> CONSTRAINT_KEYWORDS = List.of(
+        "lower", "upper", "offset", "multiplier"
+    );
+
+    private static final List<String> BLOCK_COMPLETIONS = List.of(
         "functions", "data", "transformed data",
         "parameters", "transformed parameters", "model", "generated quantities"
     );
 
-    private static final List<String> TYPE_KEYWORDS = Arrays.asList(
+    private static final List<String> TYPE_KEYWORDS = List.of(
         "int", "real", "complex",
         "vector", "row_vector", "matrix",
         "complex_vector", "complex_row_vector", "complex_matrix",
@@ -35,13 +46,10 @@ public class StanCompletionContributor extends CompletionContributor {
     );
 
     // `return` is excluded and added only inside function bodies.
-    private static final List<String> STATEMENT_KEYWORDS = Arrays.asList(
+    private static final List<String> STATEMENT_KEYWORDS = List.of(
         "if", "else", "for", "while", "break", "continue",
         "print", "reject", "fatal_error", "profile", "target", "jacobian"
     );
-
-    private static final String[] DIST_SUFFIXES =
-        {"_lpdf", "_lpmf", "_lupdf", "_lupmf"};
 
     // ── Position-classification token sets ────────────────────────────────────
 
@@ -99,22 +107,21 @@ public class StanCompletionContributor extends CompletionContributor {
         StanElementTypes.INDEX_LIST
     );
 
-    private static final TokenSet STMT_PSI_ANCESTORS = TokenSet.create(
-        StanElementTypes.VAR_DECL, StanElementTypes.DECLARED_VAR, StanElementTypes.PARAM_LIST,
-        StanElementTypes.IF_STMT, StanElementTypes.WHILE_STMT,
-        StanElementTypes.FOR_RANGE_STMT, StanElementTypes.FOR_EACH_STMT,
-        StanElementTypes.BLOCK_STMT,
-        StanElementTypes.FUN_CALL_STMT, StanElementTypes.ASSIGNMENT_STMT,
-        StanElementTypes.RETURN_STMT, StanElementTypes.PRINT_STMT,
-        StanElementTypes.REJECT_STMT, StanElementTypes.FATAL_ERROR_STMT,
-        StanElementTypes.TARGET_PLUS_ASSIGN_STMT, StanElementTypes.JACOBIAN_PLUS_ASSIGN_STMT,
-        StanElementTypes.TILDE_STMT, StanElementTypes.PROFILE_STMT,
-        StanElementTypes.BREAK_STMT, StanElementTypes.CONTINUE_STMT, StanElementTypes.SKIP_STMT,
-        StanElementTypes.FUN_DEF,
-        StanElementTypes.FUNCTIONS_BLOCK, StanElementTypes.DATA_BLOCK,
-        StanElementTypes.TRANSFORMED_DATA_BLOCK, StanElementTypes.PARAMETERS_BLOCK,
-        StanElementTypes.TRANSFORMED_PARAMETERS_BLOCK, StanElementTypes.MODEL_BLOCK,
-        StanElementTypes.GENERATED_QUANTITIES_BLOCK
+    private static final TokenSet STMT_PSI_ANCESTORS = TokenSet.orSet(
+        StanElementTypes.BLOCK_TYPES,
+        TokenSet.create(
+            StanElementTypes.VAR_DECL, StanElementTypes.DECLARED_VAR, StanElementTypes.PARAM_LIST,
+            StanElementTypes.IF_STMT, StanElementTypes.WHILE_STMT,
+            StanElementTypes.FOR_RANGE_STMT, StanElementTypes.FOR_EACH_STMT,
+            StanElementTypes.BLOCK_STMT,
+            StanElementTypes.FUN_CALL_STMT, StanElementTypes.ASSIGNMENT_STMT,
+            StanElementTypes.RETURN_STMT, StanElementTypes.PRINT_STMT,
+            StanElementTypes.REJECT_STMT, StanElementTypes.FATAL_ERROR_STMT,
+            StanElementTypes.TARGET_PLUS_ASSIGN_STMT, StanElementTypes.JACOBIAN_PLUS_ASSIGN_STMT,
+            StanElementTypes.TILDE_STMT, StanElementTypes.PROFILE_STMT,
+            StanElementTypes.BREAK_STMT, StanElementTypes.CONTINUE_STMT, StanElementTypes.SKIP_STMT,
+            StanElementTypes.FUN_DEF
+        )
     );
 
     private enum PositionKind { EXPR, STMT_START, UNKNOWN }
@@ -149,7 +156,28 @@ public class StanCompletionContributor extends CompletionContributor {
                         addDistributionCompletions(result);
                         return;
                     }
-                    IElementType block = enclosingBlock(position);
+                    // Use original-file PSI for block detection: the completion-file PSI
+                    // may have the position element inside an error node (e.g., inside an
+                    // incomplete constraint like `int<|>`), making enclosingBlock return null.
+                    PsiElement origElem = parameters.getOriginalFile()
+                            .findElementAt(Math.max(0, parameters.getOffset() - 1));
+                    IElementType block = origElem != null
+                            ? enclosingBlock(origElem) : enclosingBlock(position);
+                    boolean isDataOrParams = block == StanElementTypes.DATA_BLOCK
+                            || block == StanElementTypes.PARAMETERS_BLOCK;
+                    if (isDataOrParams && isConstraintKeywordLhsPosition(parameters)) {
+                        for (String kw : CONSTRAINT_KEYWORDS)
+                            addElementWithPriority(result, LookupElementBuilder.create(kw).bold());
+                        result.stopHere();
+                        return;
+                    }
+                    if (isDataOrParams && isInConstraintValuePosition(position)) {
+                        PsiFile file = position.getContainingFile();
+                        Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(file.getNode());
+                        addExprCompletions(result, position, file, typeMap, NO_CONSTRAINT);
+                        result.stopHere();
+                        return;
+                    }
                     if (block == null) { addBlockNameCompletions(result); return; }
                     addInsideBlockCompletions(result, block, position);
                 }
@@ -162,7 +190,7 @@ public class StanCompletionContributor extends CompletionContributor {
     private static boolean isAfterTilde(PsiElement position) {
         PsiElement leaf = PsiTreeUtil.prevLeaf(position);
         while (leaf != null) {
-            IElementType t = tokenType(leaf);
+            IElementType t = nodeType(leaf);
             if (isTrivia(t)) { leaf = PsiTreeUtil.prevLeaf(leaf); continue; }
             return t == StanTokenTypes.TILDE;
         }
@@ -174,13 +202,7 @@ public class StanCompletionContributor extends CompletionContributor {
         PsiElement p = element.getParent();
         while (p != null && !(p instanceof PsiFile)) {
             IElementType t = nodeType(p);
-            if (t == StanElementTypes.FUNCTIONS_BLOCK
-                    || t == StanElementTypes.DATA_BLOCK
-                    || t == StanElementTypes.TRANSFORMED_DATA_BLOCK
-                    || t == StanElementTypes.PARAMETERS_BLOCK
-                    || t == StanElementTypes.TRANSFORMED_PARAMETERS_BLOCK
-                    || t == StanElementTypes.MODEL_BLOCK
-                    || t == StanElementTypes.GENERATED_QUANTITIES_BLOCK) return t;
+            if (t != null && StanElementTypes.BLOCK_TYPES.contains(t)) return t;
             p = p.getParent();
         }
         return null;
@@ -192,12 +214,7 @@ public class StanCompletionContributor extends CompletionContributor {
         while (p != null && !(p instanceof PsiFile)) {
             IElementType t = nodeType(p);
             if (t == StanElementTypes.FUN_DEF) return p.getNode();
-            if (t == StanElementTypes.FUNCTIONS_BLOCK || t == StanElementTypes.DATA_BLOCK
-                    || t == StanElementTypes.TRANSFORMED_DATA_BLOCK
-                    || t == StanElementTypes.PARAMETERS_BLOCK
-                    || t == StanElementTypes.TRANSFORMED_PARAMETERS_BLOCK
-                    || t == StanElementTypes.MODEL_BLOCK
-                    || t == StanElementTypes.GENERATED_QUANTITIES_BLOCK) return null;
+            if (t != null && StanElementTypes.BLOCK_TYPES.contains(t)) return null;
             p = p.getParent();
         }
         return null;
@@ -210,14 +227,8 @@ public class StanCompletionContributor extends CompletionContributor {
             if (t == StanElementTypes.TRANSFORMED_DATA_BLOCK
                     || t == StanElementTypes.GENERATED_QUANTITIES_BLOCK) return true;
             if (t == StanElementTypes.FUN_DEF) {
-                ASTNode def = p.getNode();
-                for (ASTNode c = def.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                    if (c.getElementType() == StanTokenTypes.LPAREN) break;
-                    IElementType ct = c.getElementType();
-                    if (ct == StanTokenTypes.IDENTIFIER || ct == StanTokenTypes.BUILTIN_FUNCTION)
-                        return c.getText().endsWith("_rng");
-                }
-                return false;
+                ASTNode nameToken = StanSignatureDatabase.funDefNameToken(p.getNode());
+                return nameToken != null && nameToken.getText().endsWith("_rng");
             }
             p = p.getParent();
         }
@@ -232,7 +243,7 @@ public class StanCompletionContributor extends CompletionContributor {
     private static PositionKind classifyPosition(PsiElement position) {
         PsiElement leaf = PsiTreeUtil.prevLeaf(position);
         while (leaf != null) {
-            IElementType t = tokenType(leaf);
+            IElementType t = nodeType(leaf);
             if (isTrivia(t)) { leaf = PsiTreeUtil.prevLeaf(leaf); continue; }
             if (EXPR_PREV_TOKENS.contains(t))       return PositionKind.EXPR;
             if (STMT_START_PREV_TOKENS.contains(t)) return PositionKind.STMT_START;
@@ -483,20 +494,16 @@ public class StanCompletionContributor extends CompletionContributor {
 
     private static void collectFunDefs(ASTNode node, Map<String, String> out) {
         if (node.getElementType() == StanElementTypes.FUN_DEF) {
-            String name = null;
-            String retType = null;
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.LPAREN) break;
-                IElementType ct = c.getElementType();
-                if (ct == StanTokenTypes.IDENTIFIER || ct == StanTokenTypes.BUILTIN_FUNCTION) {
-                    name = c.getText();
-                } else if (name == null) {
-                    // Still in return-type position.
+            ASTNode nameToken = StanSignatureDatabase.funDefNameToken(node);
+            if (nameToken != null) {
+                // Collect return type from children that appear before the name token.
+                String retType = null;
+                for (ASTNode c = node.getFirstChildNode(); c != nameToken; c = c.getTreeNext()) {
                     String s = StanSignatureDatabase.typeNodeToString(c);
                     if (s != null) retType = s;
                 }
+                out.put(nameToken.getText(), retType);
             }
-            if (name != null) out.put(name, retType);
             return; // no nested function definitions
         }
         for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
@@ -507,29 +514,22 @@ public class StanCompletionContributor extends CompletionContributor {
 
     private static void addBlockNameCompletions(CompletionResultSet result) {
         for (String name : BLOCK_COMPLETIONS)
-            result.addElement(LookupElementBuilder.create(name).bold());
+            addElementWithPriority(result, LookupElementBuilder.create(name).bold());
     }
 
     private static void addDistributionCompletions(CompletionResultSet result) {
-        Set<String> baseNames = new LinkedHashSet<>();
-        for (String name : StanSignatureDatabase.getInstance().getDistributionFunctionNames()) {
-            for (String suffix : DIST_SUFFIXES) {
-                if (name.endsWith(suffix)) {
-                    baseNames.add(name.substring(0, name.length() - suffix.length())); break;
-                }
-            }
-        }
-        for (String bn : baseNames) result.addElement(LookupElementBuilder.create(bn));
+        for (String name : StanSignatureDatabase.DISTRIBUTION_BASE_NAMES)
+            addElementWithPriority(result, LookupElementBuilder.create(name));
     }
 
     private static void addInsideBlockCompletions(
             CompletionResultSet result, IElementType block, PsiElement position) {
 
-        boolean isDataOrParams = block == StanElementTypes.DATA_BLOCK
-                              || block == StanElementTypes.PARAMETERS_BLOCK;
-        ASTNode funDef         = enclosingFunDefNode(position);
-        boolean insideFunDef   = funDef != null;
-        boolean funTopLevel    = block == StanElementTypes.FUNCTIONS_BLOCK && !insideFunDef;
+        boolean isDataOrParams   = block == StanElementTypes.DATA_BLOCK
+                                || block == StanElementTypes.PARAMETERS_BLOCK;
+        ASTNode funDef           = enclosingFunDefNode(position);
+        boolean insideFunDef     = funDef != null;
+        boolean funTopLevel      = block == StanElementTypes.FUNCTIONS_BLOCK && !insideFunDef;
         boolean declarationsOnly = isDataOrParams || funTopLevel;
 
         PositionKind kind = declarationsOnly ? PositionKind.STMT_START : classifyPosition(position);
@@ -540,27 +540,24 @@ public class StanCompletionContributor extends CompletionContributor {
             TypeConstraint constraint = (kind == PositionKind.EXPR)
                     ? computeExpectedType(position, typeMap)
                     : NO_CONSTRAINT;
-
-            if (kind == PositionKind.UNKNOWN) {
-                // Also add declaration / control-flow keywords as fallback.
-                for (String kw : TYPE_KEYWORDS)
-                    result.addElement(LookupElementBuilder.create(kw).bold());
-                for (String kw : STATEMENT_KEYWORDS)
-                    result.addElement(LookupElementBuilder.create(kw).bold());
-                if (insideFunDef)
-                    result.addElement(LookupElementBuilder.create("return").bold());
-            }
+            if (kind == PositionKind.UNKNOWN)
+                addKeywordCompletions(result, true, insideFunDef);
             addExprCompletions(result, position, file, typeMap, constraint);
-
         } else { // STMT_START
-            for (String kw : TYPE_KEYWORDS)
-                result.addElement(LookupElementBuilder.create(kw).bold());
-            if (!declarationsOnly) {
-                for (String kw : STATEMENT_KEYWORDS)
-                    result.addElement(LookupElementBuilder.create(kw).bold());
-                if (insideFunDef)
-                    result.addElement(LookupElementBuilder.create("return").bold());
-            }
+            addKeywordCompletions(result, !declarationsOnly, insideFunDef);
+        }
+    }
+
+    /** Adds type-keyword completions, and optionally statement keywords and 'return'. */
+    private static void addKeywordCompletions(CompletionResultSet result,
+                                              boolean withStatements, boolean withReturn) {
+        for (String kw : TYPE_KEYWORDS)
+            addElementWithPriority(result, LookupElementBuilder.create(kw).bold());
+        if (withStatements) {
+            for (String kw : STATEMENT_KEYWORDS)
+                addElementWithPriority(result, LookupElementBuilder.create(kw).bold());
+            if (withReturn)
+                addElementWithPriority(result, LookupElementBuilder.create("return").bold());
         }
     }
 
@@ -579,28 +576,85 @@ public class StanCompletionContributor extends CompletionContributor {
             if (!rngAllowed && name.endsWith("_rng")) continue;
             boolean include = db.getSignatures(name).stream()
                     .anyMatch(s -> constraint.accepts(s.ret));
-            if (include) result.addElement(LookupElementBuilder.create(name));
+            if (include) addElementWithPriority(result, LookupElementBuilder.create(name));
         }
 
         // User-defined functions: filter by extracted return type.
         for (Map.Entry<String, String> e : collectUserFunctionMap(file).entrySet()) {
             if (constraint.accepts(e.getValue()))
-                result.addElement(LookupElementBuilder.create(e.getKey())
+                addElementWithPriority(result, LookupElementBuilder.create(e.getKey())
                         .withTypeText("user fn", true));
         }
 
         // In-scope variables: filter by declared type.
         for (Map.Entry<String, String> e : typeMap.entrySet()) {
             if (constraint.accepts(e.getValue()))
-                result.addElement(LookupElementBuilder.create(e.getKey())
+                addElementWithPriority(result, LookupElementBuilder.create(e.getKey())
                         .withTypeText(e.getValue() != null ? e.getValue() : "var", true));
         }
     }
 
+    // ── Constraint keyword detection ──────────────────────────────────────────
+
+    /**
+     * True when the cursor is on the LHS of {@code =} inside a type constraint {@code <…>}.
+     * Scans backward in the raw document text (robust to incomplete/broken PSI):
+     * <ul>
+     *   <li>prev non-identifier, non-whitespace char is {@code <} → right after opening bracket</li>
+     *   <li>prev non-identifier, non-whitespace char is {@code ,} and there is an unmatched
+     *       {@code <} further left → after a comma inside a multi-key constraint</li>
+     *   <li>anything else → not a constraint LHS</li>
+     * </ul>
+     */
+    private static boolean isConstraintKeywordLhsPosition(CompletionParameters parameters) {
+        Document doc = parameters.getEditor().getDocument();
+        int offset = parameters.getOffset();
+        if (offset == 0) return false;
+        CharSequence text = doc.getCharsSequence();
+        int i = offset - 1;
+        while (i >= 0 && isIdentChar(text.charAt(i))) i--;
+        while (i >= 0 && (text.charAt(i) == ' ' || text.charAt(i) == '\t')) i--;
+        if (i < 0) return false;
+        if (text.charAt(i) == '<') return true;
+        if (text.charAt(i) == ',') return scanForOpenConstraint(text, i - 1);
+        return false;
+    }
+
+    /** True when {@code position} is inside a constraint value expression, e.g. {@code int<lower=i>}. */
+    private static boolean isInConstraintValuePosition(PsiElement position) {
+        PsiElement p = position.getParent();
+        while (p != null && !(p instanceof PsiFile)) {
+            IElementType t = nodeType(p);
+            if (t == StanElementTypes.RANGE_CONSTRAINT || t == StanElementTypes.OFFSET_MULT_CONSTRAINT)
+                return true;
+            p = p.getParent();
+        }
+        return false;
+    }
+
+    private static boolean scanForOpenConstraint(CharSequence text, int from) {
+        int depth = 0;
+        for (int i = from; i >= 0; i--) {
+            char c = text.charAt(i);
+            if (c == '>') depth++;
+            else if (c == '<') { if (depth == 0) return true; depth--; }
+            else if (c == '{' || c == '}' || c == ';') return false;
+        }
+        return false;
+    }
+
+    private static boolean isIdentChar(char c) {
+        return Character.isLetterOrDigit(c) || c == '_';
+    }
+
     // ── Utilities ─────────────────────────────────────────────────────────────
 
-    @Nullable private static IElementType tokenType(PsiElement e) {
-        return e.getNode() != null ? e.getNode().getElementType() : null;
+    /** Adds {@code element} with higher priority when its lookup string starts with the current prefix. */
+    private static void addElementWithPriority(@NotNull CompletionResultSet result,
+                                               @NotNull LookupElement element) {
+        String prefix = result.getPrefixMatcher().getPrefix();
+        double priority = !prefix.isEmpty() && element.getLookupString().startsWith(prefix) ? 1.0 : 0.0;
+        result.addElement(PrioritizedLookupElement.withPriority(element, priority));
     }
 
     @Nullable private static IElementType nodeType(PsiElement e) {

@@ -12,7 +12,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.psi.PsiDirectory;
-import com.intellij.psi.codeStyle.CodeStyleSettingsManager;
+import com.intellij.application.options.CodeStyle;
 import com.intellij.psi.codeStyle.CommonCodeStyleSettings;
 import org.jetbrains.annotations.NotNull;
 
@@ -70,7 +70,7 @@ public class StanCreateFileAction extends DumbAwareAction {
                             int target = (newline >= 0) ? newline + 1 : brace + 1;
 
                             CommonCodeStyleSettings.IndentOptions opts =
-                                    CodeStyleSettingsManager.getInstance(project).getCurrentSettings().getIndentOptions(StanFileType.INSTANCE);
+                                    CodeStyle.getSettings(project).getIndentOptions(StanFileType.INSTANCE);
                             String indent = opts.USE_TAB_CHARACTER ? "\t" : " ".repeat(opts.INDENT_SIZE);
 
                             WriteCommandAction.runWriteCommandAction(project, () ->

@@ -32,7 +32,6 @@ public class StanParser implements PsiParser {
     @Override
     public @NotNull ASTNode parse(@NotNull IElementType root, @NotNull PsiBuilder builder) {
         this.builder = builder;
-        builder.setDebugMode(true);
         PsiBuilder.Marker m = builder.mark();
         parseProgram();
         m.done(root);
@@ -54,9 +53,33 @@ public class StanParser implements PsiParser {
         return false;
     }
 
-    /** True if the current token is IDENTIFIER or BUILTIN_FUNCTION. */
+    /** True if the current token is an identifier or a built-in function name. */
     private boolean isName() {
         return at(StanTokenTypes.IDENTIFIER) || at(StanTokenTypes.BUILTIN_FUNCTION);
+    }
+
+    /** Advances past the current name token, or emits an error and does not advance. */
+    private void expectName(String fallback) {
+        if (isName()) {
+            advance();
+        } else if (StanTokenTypes.ALL_KEYWORDS.contains(builder.getTokenType())) {
+            PsiBuilder.Marker m = builder.mark();
+            String text = builder.getTokenText();
+            advance();
+            m.error("Expected a new identifier but found reserved keyword '" + text + "'");
+        } else {
+            builder.error(fallback);
+        }
+    }
+
+    /**
+     * When consuming a name token in a *definition* position (function name in FUN_DEF),
+     * reclassify BUILTIN_FUNCTION → IDENTIFIER so the PSI node is always IDENTIFIER
+     * regardless of whether the name happens to match a built-in.
+     */
+    private void remapIfBuiltin() {
+        if (at(StanTokenTypes.BUILTIN_FUNCTION))
+            builder.remapCurrentToken(StanTokenTypes.IDENTIFIER);
     }
 
     private void advance() {
@@ -230,10 +253,11 @@ public class StanParser implements PsiParser {
     private void parseFunDef() {
         PsiBuilder.Marker m = builder.mark();
         parseReturnType();
-        if (!isName()) {
-            builder.error("Function name expected");
-        } else {
+        if (isName()) {
+            remapIfBuiltin(); // definition site: always IDENTIFIER regardless of built-in name
             advance(); // function name
+        } else {
+            expectName("Function name expected");
         }
         expect(StanTokenTypes.LPAREN, "'(' expected in function definition");
         parseParamList();
@@ -272,11 +296,7 @@ public class StanParser implements PsiParser {
         PsiBuilder.Marker m = builder.mark();
         consume(StanTokenTypes.DATA_KW);
         parseUnsizedType();
-        if (!isName()) {
-            builder.error("Parameter name expected");
-        } else {
-            advance();
-        }
+        expectName("Parameter name expected");
         m.done(StanElementTypes.ARG_DECL);
     }
 
@@ -349,295 +369,187 @@ public class StanParser implements PsiParser {
     }
 
     // -------------------------------------------------------------------------
-    // Sized / top-level types with constraints
+    // Sized types — with optional constraints
     // -------------------------------------------------------------------------
 
+    /** top-level blocks (data/parameters/…): sized types with constraint annotations. */
+    private boolean parseTopVarType()    { return parseVarType(true); }
+
+    /** model-block locals: sized types without constraint annotations. */
+    private boolean parseSizedBasicType() { return parseVarType(false); }
+
     /**
-     * topVarType: the full sized type including optional constraints.
-     * Returns true if a type was successfully parsed.
+     * Unified sized-type parser.
+     *
+     * @param allowConstraints true = data/parameters blocks (constraint annotations are legal);
+     *                         false = model-block locals (no annotations, only plain sizes).
      */
-    private boolean parseTopVarType() {
+    private boolean parseVarType(boolean allowConstraints) {
         if (at(StanTokenTypes.INT_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseRangeConstraint();
+            if (allowConstraints) parseRangeConstraint();
             m.done(StanElementTypes.INT_TYPE);
+
         } else if (at(StanTokenTypes.REAL_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
+            if (allowConstraints) parseTypeConstraint();
             m.done(StanElementTypes.REAL_TYPE);
+
         } else if (at(StanTokenTypes.COMPLEX_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
+            if (allowConstraints) parseTypeConstraint();
             m.done(StanElementTypes.COMPLEX_TYPE);
+
         } else if (at(StanTokenTypes.VECTOR_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
-            expect(StanTokenTypes.LBRACKET, "'[' expected for vector size");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected for vector size");
+            if (allowConstraints) parseTypeConstraint();
+            parseSizeBracket1D();
             m.done(StanElementTypes.VECTOR_TYPE);
+
         } else if (at(StanTokenTypes.ROW_VECTOR_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
-            expect(StanTokenTypes.LBRACKET, "'[' expected for row_vector size");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected for row_vector size");
+            if (allowConstraints) parseTypeConstraint();
+            parseSizeBracket1D();
             m.done(StanElementTypes.ROW_VECTOR_TYPE);
+
         } else if (at(StanTokenTypes.MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
-            expect(StanTokenTypes.LBRACKET, "'[' expected for matrix size");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected between matrix dimensions");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected for matrix size");
+            if (allowConstraints) parseTypeConstraint();
+            parseSizeBracket2D();
             m.done(StanElementTypes.MATRIX_TYPE);
+
         } else if (at(StanTokenTypes.COMPLEX_VECTOR_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            if (allowConstraints) parseTypeConstraint();
+            parseSizeBracket1D();
             m.done(StanElementTypes.COMPLEX_VECTOR_TYPE);
+
         } else if (at(StanTokenTypes.COMPLEX_ROW_VECTOR_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            if (allowConstraints) parseTypeConstraint();
+            parseSizeBracket1D();
             m.done(StanElementTypes.COMPLEX_ROW_VECTOR_TYPE);
+
         } else if (at(StanTokenTypes.COMPLEX_MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
             advance();
-            parseTypeConstraint();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            if (allowConstraints) parseTypeConstraint();
+            parseSizeBracket2D();
             m.done(StanElementTypes.COMPLEX_MATRIX_TYPE);
-        } else if (at(StanTokenTypes.ORDERED_KW)) {
+
+        // ---- constrained-only types ----
+        } else if (allowConstraints && at(StanTokenTypes.ORDERED_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.ORDERED_TYPE);
-        } else if (at(StanTokenTypes.POSITIVE_ORDERED_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.POSITIVE_ORDERED_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.POSITIVE_ORDERED_TYPE);
-        } else if (at(StanTokenTypes.SIMPLEX_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.SIMPLEX_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.SIMPLEX_TYPE);
-        } else if (at(StanTokenTypes.UNIT_VECTOR_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.UNIT_VECTOR_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.UNIT_VECTOR_TYPE);
-        } else if (at(StanTokenTypes.SUM_TO_ZERO_VECTOR_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.SUM_TO_ZERO_VECTOR_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.SUM_TO_ZERO_VECTOR_TYPE);
-        } else if (at(StanTokenTypes.SUM_TO_ZERO_MATRIX_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.SUM_TO_ZERO_MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket2D();
             m.done(StanElementTypes.SUM_TO_ZERO_MATRIX_TYPE);
-        } else if (at(StanTokenTypes.CHOLESKY_FACTOR_CORR_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.CHOLESKY_FACTOR_CORR_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.CHOLESKY_FACTOR_CORR_TYPE);
-        } else if (at(StanTokenTypes.CHOLESKY_FACTOR_COV_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.CHOLESKY_FACTOR_COV_KW)) {
+            // Optional second dimension: cholesky_factor_cov[M] or cholesky_factor_cov[M, N]
             PsiBuilder.Marker m = builder.mark();
             advance();
             expect(StanTokenTypes.LBRACKET, "'[' expected");
             parseExpr();
-            if (at(StanTokenTypes.COMMA)) {
-                advance();
-                parseExpr();
-            }
+            if (at(StanTokenTypes.COMMA)) { advance(); parseExpr(); }
             expect(StanTokenTypes.RBRACKET, "']' expected");
             m.done(StanElementTypes.CHOLESKY_FACTOR_COV_TYPE);
-        } else if (at(StanTokenTypes.CORR_MATRIX_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.CORR_MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.CORR_MATRIX_TYPE);
-        } else if (at(StanTokenTypes.COV_MATRIX_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.COV_MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket1D();
             m.done(StanElementTypes.COV_MATRIX_TYPE);
-        } else if (at(StanTokenTypes.COLUMN_STOCHASTIC_MATRIX_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.COLUMN_STOCHASTIC_MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket2D();
             m.done(StanElementTypes.COLUMN_STOCHASTIC_MATRIX_TYPE);
-        } else if (at(StanTokenTypes.ROW_STOCHASTIC_MATRIX_KW)) {
+
+        } else if (allowConstraints && at(StanTokenTypes.ROW_STOCHASTIC_MATRIX_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
+            advance(); parseSizeBracket2D();
             m.done(StanElementTypes.ROW_STOCHASTIC_MATRIX_TYPE);
+
         } else if (at(StanTokenTypes.ARRAY_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance(); // ARRAY_KW
-            // array dims in brackets: '[' expr (',' expr)* ']'
+            advance();
             expect(StanTokenTypes.LBRACKET, "'[' expected for array dimensions");
             parseExpr();
-            while (at(StanTokenTypes.COMMA)) {
-                advance();
-                parseExpr();
-            }
+            while (at(StanTokenTypes.COMMA)) { advance(); parseExpr(); }
             expect(StanTokenTypes.RBRACKET, "']' expected for array dimensions");
-            // inner element type
-            parseTopVarType();
+            parseVarType(allowConstraints);
             m.done(StanElementTypes.ARRAY_TYPE);
+
         } else if (at(StanTokenTypes.TUPLE_KW)) {
             PsiBuilder.Marker m = builder.mark();
-            advance(); // TUPLE_KW
+            advance();
             expect(StanTokenTypes.LPAREN, "'(' expected in tuple type");
-            parseTopVarType();
-            while (at(StanTokenTypes.COMMA)) {
-                advance();
-                parseTopVarType();
-            }
+            parseVarType(allowConstraints);
+            while (at(StanTokenTypes.COMMA)) { advance(); parseVarType(allowConstraints); }
             expect(StanTokenTypes.RPAREN, "')' expected in tuple type");
             m.done(StanElementTypes.TUPLE_TYPE);
+
         } else {
             return false;
         }
         return true;
     }
 
-    /**
-     * sizedBasicType: no constraints; used in model block variable declarations.
-     */
-    private boolean parseSizedBasicType() {
-        if (at(StanTokenTypes.INT_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            m.done(StanElementTypes.INT_TYPE);
-        } else if (at(StanTokenTypes.REAL_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            m.done(StanElementTypes.REAL_TYPE);
-        } else if (at(StanTokenTypes.COMPLEX_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            m.done(StanElementTypes.COMPLEX_TYPE);
-        } else if (at(StanTokenTypes.VECTOR_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            m.done(StanElementTypes.VECTOR_TYPE);
-        } else if (at(StanTokenTypes.ROW_VECTOR_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            m.done(StanElementTypes.ROW_VECTOR_TYPE);
-        } else if (at(StanTokenTypes.MATRIX_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            m.done(StanElementTypes.MATRIX_TYPE);
-        } else if (at(StanTokenTypes.COMPLEX_VECTOR_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            m.done(StanElementTypes.COMPLEX_VECTOR_TYPE);
-        } else if (at(StanTokenTypes.COMPLEX_ROW_VECTOR_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            m.done(StanElementTypes.COMPLEX_ROW_VECTOR_TYPE);
-        } else if (at(StanTokenTypes.COMPLEX_MATRIX_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            expect(StanTokenTypes.COMMA, "',' expected");
-            parseExpr();
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            m.done(StanElementTypes.COMPLEX_MATRIX_TYPE);
-        } else if (at(StanTokenTypes.ARRAY_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LBRACKET, "'[' expected");
-            parseExpr();
-            while (at(StanTokenTypes.COMMA)) {
-                advance();
-                parseExpr();
-            }
-            expect(StanTokenTypes.RBRACKET, "']' expected");
-            parseSizedBasicType();
-            m.done(StanElementTypes.ARRAY_TYPE);
-        } else if (at(StanTokenTypes.TUPLE_KW)) {
-            PsiBuilder.Marker m = builder.mark();
-            advance();
-            expect(StanTokenTypes.LPAREN, "'(' expected");
-            parseSizedBasicType();
-            while (at(StanTokenTypes.COMMA)) {
-                advance();
-                parseSizedBasicType();
-            }
-            expect(StanTokenTypes.RPAREN, "')' expected");
-            m.done(StanElementTypes.TUPLE_TYPE);
-        } else {
-            return false;
-        }
-        return true;
+    /** '[' expr ']' — one-dimensional size specification. */
+    private void parseSizeBracket1D() {
+        expect(StanTokenTypes.LBRACKET, "'[' expected");
+        parseExpr();
+        expect(StanTokenTypes.RBRACKET, "']' expected");
+    }
+
+    /** '[' expr ',' expr ']' — two-dimensional size specification. */
+    private void parseSizeBracket2D() {
+        expect(StanTokenTypes.LBRACKET, "'[' expected");
+        parseExpr();
+        expect(StanTokenTypes.COMMA, "',' expected");
+        parseExpr();
+        expect(StanTokenTypes.RBRACKET, "']' expected");
     }
 
     // -------------------------------------------------------------------------
@@ -809,11 +721,7 @@ public class StanParser implements PsiParser {
      */
     private void parseDeclaredVar(boolean allowAssign) {
         PsiBuilder.Marker m = builder.mark();
-        if (!isName()) {
-            builder.error("Variable name expected");
-        } else {
-            advance();
-        }
+        expectName("Variable name expected");
         // optional old-style array dimensions on the name (deprecated): name[N]
         if (at(StanTokenTypes.LBRACKET)) {
             advance(); // '['
@@ -971,9 +879,7 @@ public class StanParser implements PsiParser {
         while (!at(StanTokenTypes.RBRACE) && !eof()) {
             parseVarDeclOrStatement();
         }
-        if (!expect(StanTokenTypes.RBRACE, "'}' expected to close block")) {
-            // eof inside block — already emitted error
-        }
+        expect(StanTokenTypes.RBRACE, "'}' expected to close block");
         m.done(StanElementTypes.BLOCK_STMT);
     }
 
@@ -1008,19 +914,17 @@ public class StanParser implements PsiParser {
      *
      * If ':' follows the in-expr -> FOR_RANGE_STMT
      * Otherwise -> FOR_EACH_STMT
+     *
+     * Note: ':' is not a binary operator in Stan expressions, so parseExpr() stops before it.
+     * Ternary consumes ':' only after '?', so there is no ambiguity.
      */
     private void parseForStatement() {
         PsiBuilder.Marker m = builder.mark();
         advance(); // FOR_KW
         expect(StanTokenTypes.LPAREN, "'(' expected after 'for'");
-        if (!isName()) {
-            builder.error("Loop variable name expected");
-        } else {
-            advance();
-        }
+        expectName("Loop variable name expected");
         expect(StanTokenTypes.IN_KW, "'in' expected in for loop");
-        // Parse the range start expression at additive level to stop before ':'
-        parseAdditive();
+        parseExpr();
         if (at(StanTokenTypes.COLON)) {
             advance(); // ':'
             parseExpr();
@@ -1028,71 +932,9 @@ public class StanParser implements PsiParser {
             parseStatement();
             m.done(StanElementTypes.FOR_RANGE_STMT);
         } else {
-            // FOR_EACH: the expression may continue at higher precedence levels
-            // We already have the additive part; promote it by finishing higher levels
-            // We can wrap it up: what we parsed so far is already the complete expression
-            // since additive is below all binary ops except logical/comparison/ternary.
-            // Consume the rest of the expression by continuing up the precedence chain.
-            // Actually, re-parse properly: we need the full expr for for-each.
-            // The issue: we consumed the additive part. We need to wrap it.
-            // Strategy: if not ':', wrap the already-parsed additive into the complete expr.
-            // For correctness, we check remaining binary operators above additive level.
-            finishExprAboveAdditive();
             expect(StanTokenTypes.RPAREN, "')' expected after for-each expression");
             parseStatement();
             m.done(StanElementTypes.FOR_EACH_STMT);
-        }
-    }
-
-    /**
-     * After parseAdditive() has been called and we determine we are NOT in a range (no ':'),
-     * we need to handle remaining operators above additive level for the for-each expression.
-     * This continues parsing at each level above additive that might still apply.
-     *
-     * This is called when the left-hand side of those operators has already been emitted
-     * as a sub-tree — PsiBuilder handles this gracefully since the marker was already closed
-     * by parseAdditive. The remaining tokens (if any operators follow) will be picked up here.
-     *
-     * Note: in practice for-each ranges are usually just an identifier or simple expression,
-     * so the additive parse already consumed the complete expression in most cases.
-     */
-    private void finishExprAboveAdditive() {
-        // Comparison operators
-        while (atAny(StanTokenTypes.LESS, StanTokenTypes.LEQ, StanTokenTypes.GREATER, StanTokenTypes.GEQ)) {
-            PsiBuilder.Marker opMark = builder.mark();
-            advance();
-            parseAdditive();
-            opMark.done(StanElementTypes.BINARY_OP_EXPR);
-        }
-        // Equality
-        while (atAny(StanTokenTypes.EQUALS, StanTokenTypes.NEQUALS)) {
-            PsiBuilder.Marker opMark = builder.mark();
-            advance();
-            parseAdditive();
-            opMark.done(StanElementTypes.BINARY_OP_EXPR);
-        }
-        // Logical AND
-        while (at(StanTokenTypes.AND)) {
-            PsiBuilder.Marker opMark = builder.mark();
-            advance();
-            parseAdditive();
-            opMark.done(StanElementTypes.BINARY_OP_EXPR);
-        }
-        // Logical OR
-        while (at(StanTokenTypes.OR)) {
-            PsiBuilder.Marker opMark = builder.mark();
-            advance();
-            parseAdditive();
-            opMark.done(StanElementTypes.BINARY_OP_EXPR);
-        }
-        // Ternary
-        if (at(StanTokenTypes.QUESTION)) {
-            PsiBuilder.Marker ternMark = builder.mark();
-            advance(); // '?'
-            parseTernary();
-            expect(StanTokenTypes.COLON, "':' expected in ternary expression");
-            parseTernary();
-            ternMark.done(StanElementTypes.TERNARY_IF_EXPR);
         }
     }
 
@@ -1267,17 +1109,6 @@ public class StanParser implements PsiParser {
             StanTokenTypes.ELT_TIMES_ASSIGN, StanTokenTypes.ELT_DIVIDE_ASSIGN,
             StanTokenTypes.ARROW
         );
-    }
-
-    /** functionCallStmt: name '(' args ')' ';' */
-    private void parseFunCallStatement() {
-        PsiBuilder.Marker m = builder.mark();
-        advance(); // name
-        expect(StanTokenTypes.LPAREN, "'(' expected");
-        parseArgList();
-        expect(StanTokenTypes.RPAREN, "')' expected");
-        expectSemicolon();
-        m.done(StanElementTypes.FUN_CALL_STMT);
     }
 
     // -------------------------------------------------------------------------

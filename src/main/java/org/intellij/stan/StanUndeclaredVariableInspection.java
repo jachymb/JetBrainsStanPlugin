@@ -10,7 +10,10 @@ import com.intellij.psi.tree.IElementType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Flags uses of undeclared variables, respecting Stan's block-level waterfall scope:
@@ -95,7 +98,7 @@ public class StanUndeclaredVariableInspection extends LocalInspectionTool {
         Set<String> funcNames = new HashSet<>();
         for (ASTNode c = funcBlock.getFirstChildNode(); c != null; c = c.getTreeNext()) {
             if (c.getElementType() == StanElementTypes.FUN_DEF) {
-                ASTNode name = funDefName(c);
+                ASTNode name = StanSignatureDatabase.funDefNameToken(c);
                 if (name != null) funcNames.add(name.getText());
             }
         }
@@ -105,36 +108,10 @@ public class StanUndeclaredVariableInspection extends LocalInspectionTool {
         }
     }
 
-    @Nullable
-    private ASTNode funDefName(ASTNode funDef) {
-        for (ASTNode c = funDef.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-            if (c.getElementType() == StanTokenTypes.LPAREN) break;
-            IElementType ct = c.getElementType();
-            if (ct == StanTokenTypes.IDENTIFIER || ct == StanTokenTypes.BUILTIN_FUNCTION)
-                return c;
-        }
-        return null;
-    }
-
     private void checkFunDef(ASTNode funDef, Set<String> funcNames, ProblemsHolder holder) {
         // Function body sees only other function names and its own formal parameters.
         Scope scope = new Scope(funcNames);
-        // Parameters are wrapped in a PARAM_LIST child of FUN_DEF; ARG_DECLs are inside it.
-        for (ASTNode c = funDef.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-            if (c.getElementType() == StanElementTypes.PARAM_LIST) {
-                for (ASTNode param = c.getFirstChildNode(); param != null; param = param.getTreeNext()) {
-                    if (param.getElementType() == StanElementTypes.ARG_DECL) {
-                        // ARG_DECL: [DATA_KW] unsizedType IDENTIFIER — name is the last token
-                        for (ASTNode gc = param.getFirstChildNode(); gc != null; gc = gc.getTreeNext()) {
-                            IElementType gt = gc.getElementType();
-                            if (gt == StanTokenTypes.IDENTIFIER || gt == StanTokenTypes.BUILTIN_FUNCTION)
-                                scope.declare(gc.getText());
-                        }
-                    }
-                }
-                break;
-            }
-        }
+        StanSignatureDatabase.buildFunctionParamMap(funDef).keySet().forEach(scope::declare);
         for (ASTNode c = funDef.getFirstChildNode(); c != null; c = c.getTreeNext()) {
             if (c.getElementType() == StanElementTypes.BLOCK_STMT) {
                 processBlockBody(c, scope, false, holder);
@@ -162,7 +139,7 @@ public class StanUndeclaredVariableInspection extends LocalInspectionTool {
 
     // ── Statement types ───────────────────────────────────────────────────────
 
-    private static final Set<IElementType> STMT_TYPES = new HashSet<>(Arrays.asList(
+    private static final Set<IElementType> STMT_TYPES = Set.of(
             StanElementTypes.VAR_DECL,
             StanElementTypes.ASSIGNMENT_STMT,
             StanElementTypes.FUN_CALL_STMT,
@@ -182,7 +159,7 @@ public class StanUndeclaredVariableInspection extends LocalInspectionTool {
             StanElementTypes.FOR_EACH_STMT,
             StanElementTypes.PROFILE_STMT,
             StanElementTypes.BLOCK_STMT
-    ));
+    );
 
     // ── Statement dispatch ────────────────────────────────────────────────────
 

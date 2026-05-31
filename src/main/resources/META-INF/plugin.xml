@@ -3,17 +3,19 @@
     <name>Stan Language Support</name>
     <vendor>Community</vendor>
     <description><![CDATA[
-        Syntax highlighting support for the Stan statistical modeling language.<br/>
-        Stan is a probabilistic programming language for Bayesian statistical inference,
-        full Bayesian statistical inference with MCMC sampling, approximate Bayesian
-        inference with variational inference, and penalized maximum likelihood estimation.<br/><br/>
-        Features:
+        <a href="https://mc-stan.org/">Stan</a> plugin for JetBrains IDEs.<br/><br/>
+        Currently supports:
         <ul>
-            <li>Syntax highlighting for keywords, types, built-in functions, and distributions</li>
-            <li>Comment highlighting (// and /* */ and # styles)</li>
-            <li>Number and string literal highlighting</li>
-            <li>Customizable colors via Settings → Editor → Color Scheme → Stan</li>
+            <li>Syntax highlighting (configurable: Settings → Editor → Color Scheme → Stan)</li>
+            <li>Syntax validation (full AST parsing internally)</li>
+            <li>Code folding (on <code>{}</code> blocks)</li>
+            <li>Basic autocompletion (all builtins, keywords, variable names in scope)</li>
+            <li>Basic type checking</li>
+            <li>Semantic checks for unused variables</li>
+            <li>Semantic checks for name shadowing</li>
+            <li>Create a new Stan file from the file explorer context menu</li>
         </ul>
+        Reuses syntax and semantics defined in <a href="https://github.com/stan-dev/stanc3">Stanc3</a>.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -46,9 +48,20 @@
         <colorSettingsPage
             implementation="org.intellij.stan.StanColorSettingsPage"/>
 
+        <annotator
+            language="Stan"
+            implementationClass="org.intellij.stan.StanSemanticHighlightAnnotator"/>
+
+        <lang.foldingBuilder
+            language="Stan"
+            implementationClass="org.intellij.stan.StanFoldingBuilder"/>
+
         <completion.contributor
             language="Stan"
             implementationClass="org.intellij.stan.StanCompletionContributor"/>
+
+        <typedHandler
+            implementationClass="org.intellij.stan.StanBracketHandler"/>
 
         <localInspection
             language="Stan"
@@ -95,6 +108,14 @@
             displayName="Unused variable"
             groupName="Stan"
             implementationClass="org.intellij.stan.StanUnusedVariableInspection"
+            enabledByDefault="true"
+            level="WARNING"/>
+
+        <localInspection
+            language="Stan"
+            displayName="Name shadows built-in function"
+            groupName="Stan"
+            implementationClass="org.intellij.stan.StanShadowingInspection"
             enabledByDefault="true"
             level="WARNING"/>
 

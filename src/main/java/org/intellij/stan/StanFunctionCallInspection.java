@@ -9,9 +9,13 @@ import com.intellij.psi.PsiElementVisitor;
 import com.intellij.psi.PsiFile;
 import com.intellij.psi.tree.IElementType;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.IntSummaryStatistics;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * Checks every built-in function call against the signature database generated
@@ -30,35 +34,10 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
             public void visitFile(@NotNull PsiFile file) {
                 ASTNode root = file.getNode();
                 Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(root);
-                Set<String> userFunctions = collectUserDefinedFunctions(root);
+                Set<String> userFunctions = StanSignatureDatabase.collectUserDefinedFunctionNames(root);
                 checkCalls(root, typeMap, userFunctions, holder);
             }
         };
-    }
-
-    /** Collect all function names declared/defined in the functions block. */
-    private Set<String> collectUserDefinedFunctions(ASTNode root) {
-        Set<String> names = new HashSet<>();
-        Deque<ASTNode> stack = new ArrayDeque<>();
-        stack.push(root);
-        while (!stack.isEmpty()) {
-            ASTNode node = stack.pop();
-            if (node.getElementType() == StanElementTypes.FUN_DEF) {
-                // The function name is the first IDENTIFIER or BUILTIN_FUNCTION child before LPAREN.
-                for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                    if (c.getElementType() == StanTokenTypes.LPAREN) break;
-                    if (c.getElementType() == StanTokenTypes.IDENTIFIER
-                            || c.getElementType() == StanTokenTypes.BUILTIN_FUNCTION) {
-                        names.add(c.getText());
-                        break;
-                    }
-                }
-                continue; // no nested function definitions in Stan
-            }
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
-                stack.push(c);
-        }
-        return names;
     }
 
     private void checkCalls(ASTNode node, Map<String, String> typeMap,
@@ -74,15 +53,19 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
             return;
         }
 
-        // A BUILTIN_FUNCTION token inside VARIABLE_EXPR means the function name was written
-        // without a call — e.g. `int a = falling_factorial`.  Functions are not values in Stan.
+        // An IDENTIFIER inside VARIABLE_EXPR whose text is a known built-in (and not shadowed)
+        // means the function name was written without a call — functions are not values in Stan.
         if (t == StanElementTypes.VARIABLE_EXPR) {
             ASTNode first = node.getFirstChildNode();
-            if (first != null && first.getElementType() == StanTokenTypes.BUILTIN_FUNCTION) {
-                holder.registerProblem(first.getPsi(),
-                        "'" + first.getText() + "' is a function and cannot be used as a value; did you forget '(...)'?",
-                        ProblemHighlightType.GENERIC_ERROR);
-                return; // no point recursing into this leaf
+            if (first != null && first.getElementType() == StanTokenTypes.IDENTIFIER) {
+                String name = first.getText();
+                StanSignatureDatabase db = StanSignatureDatabase.getInstance();
+                if (db.hasFunction(name) && !typeMap.containsKey(name) && !userFunctions.contains(name)) {
+                    holder.registerProblem(first.getPsi(),
+                            "'" + name + "' is a function and cannot be used as a value; did you forget '(...)'?",
+                            ProblemHighlightType.GENERIC_ERROR);
+                    return;
+                }
             }
         }
 
@@ -100,14 +83,14 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
         ASTNode nameToken = callNode.getFirstChildNode();
         if (nameToken == null) return;
         IElementType nameType = nameToken.getElementType();
+        if (nameType != StanTokenTypes.IDENTIFIER && nameType != StanTokenTypes.BUILTIN_FUNCTION) return;
         String fnName = nameToken.getText();
 
-        // Rule: conditioning-suffix functions (_lpdf, _lpmf, _cdf, _lcdf, _lccdf, …) called
-        // with 2+ arguments WITHOUT '|' notation → stanc3 "conditioning_required" error.
-        // Single-arg calls are excluded: stanc3 auto-promotes f(y) to f(y | ) silently.
+        // Conditioning-suffix functions called with 2+ args without '|' notation.
+        // Skip if the name is shadowed by a local (typeMap) so we don't false-positive.
         if (callNode.getElementType() == StanElementTypes.FUN_CALL_EXPR
-                && (nameType == StanTokenTypes.BUILTIN_FUNCTION || nameType == StanTokenTypes.IDENTIFIER)
-                && StanParser.hasConditioningSuffix(fnName)) {
+                && StanParser.hasConditioningSuffix(fnName)
+                && !typeMap.containsKey(fnName)) {
             List<ASTNode> condArgExprs = StanSignatureDatabase.collectArgExprs(callNode);
             if (condArgExprs.size() >= 2) {
                 holder.registerProblem(nameToken.getPsi(),
@@ -117,19 +100,31 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
             }
         }
 
-        // Undefined function: IDENTIFIER head that is not declared in the functions block.
-        if (nameType == StanTokenTypes.IDENTIFIER && !userFunctions.contains(fnName)) {
+        // IDENTIFIER head: user-defined function or undefined.
+        if (nameType == StanTokenTypes.IDENTIFIER) {
+            if (typeMap.containsKey(fnName)) {
+                holder.registerProblem(nameToken.getPsi(),
+                        "A returning function was expected but a non-function value '" + fnName + "' was supplied.",
+                        ProblemHighlightType.GENERIC_ERROR);
+                return;
+            }
+            if (!userFunctions.contains(fnName))
+                holder.registerProblem(nameToken.getPsi(),
+                        "Undefined function '" + fnName + "'",
+                        ProblemHighlightType.GENERIC_ERROR);
+            return; // no arity/type check for user-defined functions
+        }
+
+        // BUILTIN_FUNCTION head: the lexer guarantees the name is followed by '('.
+        // If shadowed by a local variable/parameter, it cannot be called as a function.
+        if (typeMap.containsKey(fnName)) {
             holder.registerProblem(nameToken.getPsi(),
-                    "Undefined function '" + fnName + "'",
+                    "A returning function was expected but a non-function value '" + fnName + "' was supplied.",
                     ProblemHighlightType.GENERIC_ERROR);
             return;
         }
 
-        // Only check arity/types for known built-ins; skip user-defined functions.
-        if (nameType != StanTokenTypes.BUILTIN_FUNCTION) return;
-
         StanSignatureDatabase db = StanSignatureDatabase.getInstance();
-
         // Distribution calls in COND_DIST_EXPR: f(y | mu, sigma)
         // The first ARG_LIST is what comes before |, the second is after.
         // In stanc these are combined: f_lpdf(y | mu, sigma) = f_lpdf(args_before | args_after).
@@ -138,7 +133,17 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
         int actualArity = argExprs.size();
 
         List<StanSignatureDatabase.Signature> sigs = db.getSignatures(fnName);
-        if (sigs.isEmpty()) return; // not in DB (shouldn't happen for BUILTIN_FUNCTION)
+        if (sigs.isEmpty()) {
+            // Bare distribution names (e.g. "poisson", "normal") are lexed as BUILTIN_FUNCTION
+            // so they highlight correctly in tilde statements, but they are not callable functions.
+            if (StanSignatureDatabase.DISTRIBUTION_BASE_NAMES.contains(fnName)) {
+                holder.registerProblem(nameToken.getPsi(),
+                        "'" + fnName + "' is a distribution name, not a callable function; " +
+                        "use '" + fnName + "_lpdf', '" + fnName + "_lpmf', or a tilde statement",
+                        ProblemHighlightType.GENERIC_ERROR);
+            }
+            return;
+        }
 
         // ── Arity check ───────────────────────────────────────────────────────
         boolean arityOk = sigs.stream().anyMatch(s -> s.args.size() == actualArity);

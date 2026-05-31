@@ -173,6 +173,8 @@ public interface StanTokenTypes {
     TokenSet COMMENTS      = TokenSet.create(LINE_COMMENT, BLOCK_COMMENT);
     TokenSet NUMBER_LITERALS = TokenSet.create(INT_LITERAL, REAL_LITERAL, IMAG_LITERAL);
     TokenSet IDENTIFIERS   = TokenSet.create(IDENTIFIER, BUILTIN_FUNCTION);
+    TokenSet ALL_KEYWORDS  = TokenSet.orSet(KEYWORDS, BLOCK_KEYWORDS, TYPE_KEYWORDS, CONSTRAINT_KEYWORDS,
+                                 TokenSet.create(RESERVED, TRUNCATE_KW));
     TokenSet ASSIGNMENT_OPS = TokenSet.create(
         ASSIGN, PLUS_ASSIGN, MINUS_ASSIGN, TIMES_ASSIGN, DIVIDE_ASSIGN,
         ELT_TIMES_ASSIGN, ELT_DIVIDE_ASSIGN, ARROW

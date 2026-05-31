@@ -89,51 +89,15 @@ public class StanLexer extends LexerBase {
         KEYWORD_MAP.put("T",          StanTokenTypes.TRUNCATE_KW);
 
         // ---- Built-in functions from the signature database ----
-        // putIfAbsent so that keywords defined above always win.
-        // Distribution suffix variants (_lupdf/_lupmf) are also included.
+        // putIfAbsent so keywords defined above always win.
         for (String name : StanSignatureDatabase.getInstance().getFunctionNames()) {
             KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
         for (String name : StanSignatureDatabase.getInstance().getDistributionFunctionNames()) {
             KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
-
-        // ---- Distribution base names (bare stems not in the DB as full signatures) ----
-        String[] distBaseNames = {
-            "bernoulli", "bernoulli_logit", "bernoulli_logit_glm",
-            "beta", "beta_binomial", "beta_neg_binomial", "beta_proportion",
-            "binomial", "binomial_logit", "binomial_logit_glm",
-            "categorical", "categorical_logit", "categorical_logit_glm",
-            "cauchy", "chi_square",
-            "dirichlet", "dirichlet_multinomial", "discrete_range", "double_exponential",
-            "exp_mod_normal", "exponential",
-            "frechet", "gamma", "gaussian_dlm_obs",
-            "gumbel", "hmm_latent", "hypergeometric",
-            "inv_chi_square", "inv_gamma",
-            "inv_wishart", "inv_wishart_cholesky",
-            "lkj_corr", "lkj_corr_cholesky",
-            "logistic", "loglogistic", "lognormal",
-            "multinomial", "multinomial_logit",
-            "multi_gp", "multi_gp_cholesky",
-            "multi_normal", "multi_normal_cholesky", "multi_normal_prec",
-            "multi_student_t", "multi_student_t_cholesky",
-            "neg_binomial", "neg_binomial_2", "neg_binomial_2_log", "neg_binomial_2_log_glm",
-            "normal", "normal_id_glm",
-            "ordered_logistic", "ordered_logistic_glm", "ordered_probit",
-            "pareto", "pareto_type_2",
-            "poisson", "poisson_log", "poisson_log_glm",
-            "rayleigh", "scaled_inv_chi_square",
-            "skew_normal", "skew_double_exponential",
-            "std_normal", "student_t",
-            "uniform", "von_mises", "weibull", "wiener",
-            "wishart", "wishart_cholesky", "yule_simon",
-            // Deprecated / legacy names no longer in the DB
-            "lkj_cov",
-            "integrate_ode", "integrate_ode_rk45", "integrate_ode_bdf", "integrate_ode_adams",
-            "get_lp", "increment_log_prob",
-        };
-        for (String b : distBaseNames) {
-            KEYWORD_MAP.putIfAbsent(b, StanTokenTypes.BUILTIN_FUNCTION);
+        for (String name : StanSignatureDatabase.DISTRIBUTION_BASE_NAMES) {
+            KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
 
         // ---- Reserved words (C++ keywords forbidden as Stan identifiers) ----
@@ -348,6 +312,15 @@ public class StanLexer extends LexerBase {
             myTokenEnd = pos;
             String text = myBuffer.subSequence(myTokenStart, myTokenEnd).toString();
             IElementType kw = KEYWORD_MAP.get(text);
+            // Built-in names should only get the BUILTIN_FUNCTION token type when they are
+            // actually being called (immediately followed by '(', possibly with whitespace).
+            // In all other positions — declarations, variable references, lvalues — they are
+            // plain identifiers so the syntax highlighter does not color them as builtins.
+            if (kw == StanTokenTypes.BUILTIN_FUNCTION) {
+                int la = myTokenEnd;
+                while (la < myEnd && myBuffer.charAt(la) <= ' ') la++;
+                if (la >= myEnd || myBuffer.charAt(la) != '(') kw = StanTokenTypes.IDENTIFIER;
+            }
             return kw != null ? kw : StanTokenTypes.IDENTIFIER;
         }
 

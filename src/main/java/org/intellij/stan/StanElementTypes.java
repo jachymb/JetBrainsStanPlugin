@@ -1,6 +1,7 @@
 package org.intellij.stan;
 
 import com.intellij.psi.tree.IElementType;
+import com.intellij.psi.tree.TokenSet;
 
 /**
  * IElementType constants for every non-terminal node in the Stan AST.
@@ -114,4 +115,11 @@ public interface StanElementTypes {
     // ---- Constraints ----
     IElementType RANGE_CONSTRAINT       = new StanTokenType("RANGE_CONSTRAINT");        // <lower=...,upper=...>
     IElementType OFFSET_MULT_CONSTRAINT = new StanTokenType("OFFSET_MULT_CONSTRAINT"); // <offset=...,multiplier=...>
+
+    // ---- Convenient element-type sets ----
+    TokenSet BLOCK_TYPES = TokenSet.create(
+        FUNCTIONS_BLOCK, DATA_BLOCK, TRANSFORMED_DATA_BLOCK,
+        PARAMETERS_BLOCK, TRANSFORMED_PARAMETERS_BLOCK,
+        MODEL_BLOCK, GENERATED_QUANTITIES_BLOCK
+    );
 }

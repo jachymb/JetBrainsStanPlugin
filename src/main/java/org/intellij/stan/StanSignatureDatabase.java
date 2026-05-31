@@ -47,6 +47,45 @@ public final class StanSignatureDatabase {
 
     // ── Singleton ─────────────────────────────────────────────────────────────
 
+    /**
+     * Distribution family base names — the bare stem used in tilde statements
+     * (e.g. {@code y ~ normal(mu, sigma)}).  Includes both names in the DB and
+     * deprecated legacy names that are not in the DB as full signatures.
+     */
+    public static final Set<String> DISTRIBUTION_BASE_NAMES = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList(
+                "bernoulli", "bernoulli_logit", "bernoulli_logit_glm",
+                "beta", "beta_binomial", "beta_neg_binomial", "beta_proportion",
+                "binomial", "binomial_logit", "binomial_logit_glm",
+                "categorical", "categorical_logit", "categorical_logit_glm",
+                "cauchy", "chi_square",
+                "dirichlet", "dirichlet_multinomial", "discrete_range", "double_exponential",
+                "exp_mod_normal", "exponential",
+                "frechet", "gamma", "gaussian_dlm_obs",
+                "gumbel", "hmm_latent", "hypergeometric",
+                "inv_chi_square", "inv_gamma",
+                "inv_wishart", "inv_wishart_cholesky",
+                "lkj_corr", "lkj_corr_cholesky",
+                "logistic", "loglogistic", "lognormal",
+                "multinomial", "multinomial_logit",
+                "multi_gp", "multi_gp_cholesky",
+                "multi_normal", "multi_normal_cholesky", "multi_normal_prec",
+                "multi_student_t", "multi_student_t_cholesky",
+                "neg_binomial", "neg_binomial_2", "neg_binomial_2_log", "neg_binomial_2_log_glm",
+                "normal", "normal_id_glm",
+                "ordered_logistic", "ordered_logistic_glm", "ordered_probit",
+                "pareto", "pareto_type_2",
+                "poisson", "poisson_log", "poisson_log_glm",
+                "rayleigh", "scaled_inv_chi_square",
+                "skew_normal", "skew_double_exponential",
+                "std_normal", "student_t",
+                "uniform", "von_mises", "weibull", "wiener",
+                "wishart", "wishart_cholesky", "yule_simon",
+                "lkj_cov",
+                "integrate_ode", "integrate_ode_rk45", "integrate_ode_bdf", "integrate_ode_adams",
+                "get_lp", "increment_log_prob"
+            )));
+
     private static volatile StanSignatureDatabase INSTANCE;
 
     private final Map<String, List<Signature>> functions; // name → overloads
@@ -84,6 +123,56 @@ public final class StanSignatureDatabase {
         distributionFunctions = Collections.unmodifiableSet(dist);
     }
 
+    // ── AST utilities (shared by inspections and completion) ─────────────────
+
+    /**
+     * Returns the name token (IDENTIFIER) of a FUN_DEF node,
+     * i.e. the first IDENTIFIER child before the LPAREN.  Returns null on malformed nodes.
+     */
+    public static @Nullable ASTNode funDefNameToken(@NotNull ASTNode funDef) {
+        for (ASTNode c = funDef.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+            if (c.getElementType() == StanTokenTypes.LPAREN) break;
+            IElementType t = c.getElementType();
+            if (t == StanTokenTypes.IDENTIFIER || t == StanTokenTypes.BUILTIN_FUNCTION) return c;
+        }
+        return null;
+    }
+
+    /**
+     * Returns the name token of an ARG_DECL node: the IDENTIFIER that follows the type node
+     * (and optional DATA_KW).  Returns null on malformed nodes.
+     */
+    public static @Nullable ASTNode argDeclNameToken(@NotNull ASTNode argDecl) {
+        boolean typeFound = false;
+        for (ASTNode c = argDecl.getFirstChildNode(); c != null; c = c.getTreeNext()) {
+            IElementType et = c.getElementType();
+            if (et == StanTokenTypes.DATA_KW) continue;
+            if (!typeFound) { typeFound = true; continue; }
+            if (et == StanTokenTypes.IDENTIFIER || et == StanTokenTypes.BUILTIN_FUNCTION) return c;
+        }
+        return null;
+    }
+
+    /**
+     * Collects the names of all user-defined functions in the given AST subtree.
+     * Used by inspections and completion to distinguish user-defined from built-in functions.
+     */
+    public static @NotNull Set<String> collectUserDefinedFunctionNames(@NotNull ASTNode root) {
+        Set<String> names = new HashSet<>();
+        collectUserDefinedFunctionNamesRec(root, names);
+        return names;
+    }
+
+    private static void collectUserDefinedFunctionNamesRec(ASTNode node, Set<String> names) {
+        if (node.getElementType() == StanElementTypes.FUN_DEF) {
+            ASTNode nameToken = funDefNameToken(node);
+            if (nameToken != null) names.add(nameToken.getText());
+            return; // no nested function definitions in Stan
+        }
+        for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
+            collectUserDefinedFunctionNamesRec(c, names);
+    }
+
     // ── Public query API ──────────────────────────────────────────────────────
 
     public boolean hasFunction(@NotNull String name) {
@@ -100,6 +189,17 @@ public final class StanSignatureDatabase {
 
     public @NotNull Set<String> getFunctionNames() {
         return Collections.unmodifiableSet(functions.keySet());
+    }
+
+    /**
+     * True if {@code name} is any kind of built-in identifier: a function in the DB,
+     * a distribution suffix variant (_lupdf/_lupmf), or a distribution family base name
+     * used in tilde statements.
+     */
+    public boolean isBuiltinName(@NotNull String name) {
+        return functions.containsKey(name)
+                || distributionFunctions.contains(name)
+                || DISTRIBUTION_BASE_NAMES.contains(name);
     }
 
     // ── JSON parser ───────────────────────────────────────────────────────────
@@ -368,8 +468,8 @@ public final class StanSignatureDatabase {
             // Look up the return type of the called function from the database.
             // COND_DIST_EXPR (bar notation) is treated identically: same name, same return type.
             ASTNode nameNode = expr.getFirstChildNode();
-            if (nameNode != null && (nameNode.getElementType() == StanTokenTypes.BUILTIN_FUNCTION
-                                  || nameNode.getElementType() == StanTokenTypes.IDENTIFIER)) {
+            if (nameNode != null && (nameNode.getElementType() == StanTokenTypes.IDENTIFIER
+                                  || nameNode.getElementType() == StanTokenTypes.BUILTIN_FUNCTION)) {
                 String fnName = nameNode.getText();
                 List<Signature> sigs = getInstance().getSignatures(fnName);
                 if (!sigs.isEmpty()) {
@@ -381,7 +481,7 @@ public final class StanSignatureDatabase {
 
                     // If all arg types are unknown we can't determine the return type.
                     // Picking the first matching signature would be arbitrary and cause false positives.
-                    boolean anyKnown = argTypes.stream().anyMatch(s -> s != null);
+                    boolean anyKnown = argTypes.stream().anyMatch(Objects::nonNull);
                     if (!anyKnown) return null;
 
                     // Find the best matching signature for arity and known arg types.
@@ -465,17 +565,13 @@ public final class StanSignatureDatabase {
     }
 
     private static void processArgDecl(ASTNode argDecl, Map<String, String> map) {
-        String typeStr = null;
-        String paramName = null;
-        for (ASTNode c = argDecl.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-            IElementType et = c.getElementType();
-            if (et == StanTokenTypes.DATA_KW) continue;
-            if (typeStr == null)
-                typeStr = c.getFirstChildNode() != null ? typeNodeToString(c) : kwToTypeString(et);
-            if (paramName == null && (et == StanTokenTypes.IDENTIFIER || et == StanTokenTypes.BUILTIN_FUNCTION))
-                paramName = c.getText();
+        ASTNode nameToken = argDeclNameToken(argDecl);
+        if (nameToken == null) return;
+        for (ASTNode c = argDecl.getFirstChildNode(); c != nameToken; c = c.getTreeNext()) {
+            if (c.getElementType() == StanTokenTypes.DATA_KW) continue;
+            String typeStr = c.getFirstChildNode() != null ? typeNodeToString(c) : kwToTypeString(c.getElementType());
+            if (typeStr != null) { map.put(nameToken.getText(), typeStr); return; }
         }
-        if (typeStr != null && paramName != null) map.put(paramName, typeStr);
     }
 
     private static void buildTypeMapRec(ASTNode node, Map<String, String> map) {
