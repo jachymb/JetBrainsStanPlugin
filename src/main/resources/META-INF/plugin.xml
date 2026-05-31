@@ -63,6 +63,10 @@
         <typedHandler
             implementationClass="org.intellij.stan.StanBracketHandler"/>
 
+        <lang.documentationProvider
+            language="Stan"
+            implementationClass="org.intellij.stan.StanDocumentationProvider"/>
+
         <localInspection
             language="Stan"
             displayName="Reserved word used as identifier"
