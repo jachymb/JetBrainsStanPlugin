@@ -53,9 +53,9 @@ public class StanParser implements PsiParser {
         return false;
     }
 
-    /** True if the current token is an identifier or a built-in function name. */
+    /** True if the current token is an identifier, a built-in function name, or the truncation keyword 'T' (which the grammar allows as an ordinary identifier). */
     private boolean isName() {
-        return at(StanTokenTypes.IDENTIFIER) || at(StanTokenTypes.BUILTIN_FUNCTION);
+        return at(StanTokenTypes.IDENTIFIER) || at(StanTokenTypes.BUILTIN_FUNCTION) || at(StanTokenTypes.TRUNCATE_KW);
     }
 
     /** Advances past the current name token, or emits an error and does not advance. */
@@ -78,7 +78,7 @@ public class StanParser implements PsiParser {
      * regardless of whether the name happens to match a built-in.
      */
     private void remapIfBuiltin() {
-        if (at(StanTokenTypes.BUILTIN_FUNCTION))
+        if (at(StanTokenTypes.BUILTIN_FUNCTION) || at(StanTokenTypes.TRUNCATE_KW))
             builder.remapCurrentToken(StanTokenTypes.IDENTIFIER);
     }
 
