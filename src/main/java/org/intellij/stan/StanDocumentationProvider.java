@@ -10,7 +10,9 @@ import com.intellij.psi.tree.IElementType;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 public class StanDocumentationProvider extends AbstractDocumentationProvider {
 
@@ -80,7 +82,7 @@ public class StanDocumentationProvider extends AbstractDocumentationProvider {
             }
             // Builtin (or shadowed builtin — show builtin sigs)
             List<StanSignatureDatabase.Signature> sigs = db.getSignatures(name);
-            if (!sigs.isEmpty()) return buildBuiltinDoc(name, sigs);
+            if (!sigs.isEmpty()) return buildBuiltinDoc(name, sigs, findMatchedSignature(token, sigs));
             // User-defined fallback
             if (funDef != null) return buildUserFunDoc(name, funDef);
             return null;
@@ -113,19 +115,89 @@ public class StanDocumentationProvider extends AbstractDocumentationProvider {
 
     // ── Builtin function documentation ───────────────────────────────────────
 
-    private static String buildBuiltinDoc(String name, List<StanSignatureDatabase.Signature> sigs) {
+    private static String buildBuiltinDoc(String name, List<StanSignatureDatabase.Signature> sigs,
+                                          @Nullable StanSignatureDatabase.Signature matched) {
         StringBuilder sb = new StringBuilder();
         sb.append("<b>").append(esc(name)).append("</b>");
         sb.append("<pre style='margin:4px 0'>");
         boolean isCondDist = isConditioningSuffix(name);
-        for (StanSignatureDatabase.Signature sig : sigs) {
-            appendSignatureLine(sb, name, sig, isCondDist);
-            sb.append("\n");
+        if (matched != null) {
+            sb.append("<b>");
+            appendSignatureLine(sb, name, matched, isCondDist);
+            sb.append("</b>");
+            for (StanSignatureDatabase.Signature sig : sigs) {
+                if (sig == matched) continue;
+                sb.append("\n");
+                appendSignatureLine(sb, name, sig, isCondDist);
+            }
+        } else {
+            for (StanSignatureDatabase.Signature sig : sigs) {
+                appendSignatureLine(sb, name, sig, isCondDist);
+                sb.append("\n");
+            }
+            if (sb.charAt(sb.length() - 1) == '\n') sb.deleteCharAt(sb.length() - 1);
         }
-        // Remove trailing newline
-        if (sb.charAt(sb.length() - 1) == '\n') sb.deleteCharAt(sb.length() - 1);
         sb.append("</pre>");
         return sb.toString();
+    }
+
+    /**
+     * Returns the lowest-promotion-cost overload for the call at {@code callToken}, or null if
+     * no overload is compatible or two overloads tie. Exact matches (cost 0) naturally beat
+     * promoted ones, so no separate exact-match pass is needed.
+     */
+    private static @Nullable StanSignatureDatabase.Signature findMatchedSignature(
+            PsiElement callToken, List<StanSignatureDatabase.Signature> sigs) {
+        PsiFile file = callToken.getContainingFile();
+        if (file == null) return null;
+        Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(file.getNode());
+        List<ASTNode> argNodes = StanSignatureDatabase.collectArgExprs(callToken.getParent().getNode());
+        int argCount = argNodes.size();
+        List<String> argTypes = new ArrayList<>(argCount);
+        for (ASTNode a : argNodes) argTypes.add(StanSignatureDatabase.inferExprType(a, typeMap));
+
+        StanSignatureDatabase.Signature best = null;
+        int bestCost = Integer.MAX_VALUE;
+        boolean unique = false;
+        for (StanSignatureDatabase.Signature sig : sigs) {
+            if (sig.args.size() != argCount) continue;
+            int cost = sigCost(sig.args, argTypes);
+            if (cost < bestCost) { bestCost = cost; best = sig; unique = true; }
+            else if (cost == bestCost) { unique = false; }
+        }
+        return unique ? best : null;
+    }
+
+    /** Total promotion cost from {@code actual} arg types to {@code expected} param types. */
+    private static int sigCost(List<String> expected, List<String> actual) {
+        int total = 0;
+        for (int i = 0; i < expected.size(); i++) {
+            int c = argCost(expected.get(i), i < actual.size() ? actual.get(i) : null);
+            if (c == Integer.MAX_VALUE) return Integer.MAX_VALUE;
+            total += c;
+        }
+        return total;
+    }
+
+    /**
+     * Promotion steps from {@code actual} to {@code expected}.
+     * Scalars follow the chain int(0)→real(1)→complex(2); distance = index difference.
+     * Container promotions (e.g. vector→complex_vector) cost 1 via {@code isCompatible}.
+     * Returns {@code Integer.MAX_VALUE} when incompatible.
+     */
+    private static int argCost(String expected, @Nullable String actual) {
+        if (actual == null || expected.equals(actual)) return 0;
+        int ei = scalarIndex(expected), ai = scalarIndex(actual);
+        if (ei > ai && ai >= 0) return ei - ai;
+        if (StanSignatureDatabase.isCompatible(expected, actual)) return 1;
+        return Integer.MAX_VALUE;
+    }
+
+    private static int scalarIndex(String type) {
+        if ("int".equals(type))     return 0;
+        if ("real".equals(type))    return 1;
+        if ("complex".equals(type)) return 2;
+        return -1;
     }
 
     private static boolean appendFunctionSigs(StringBuilder sb, String name, StanSignatureDatabase db, boolean header) {
