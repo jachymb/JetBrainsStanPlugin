@@ -4,8 +4,6 @@ import com.intellij.ide.IdeView;
 import com.intellij.openapi.actionSystem.*;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.command.WriteCommandAction;
-import com.intellij.openapi.editor.Editor;
-import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.project.DumbAwareAction;
 import com.intellij.openapi.project.Project;
@@ -54,31 +52,19 @@ public class StanCreateFileAction extends DumbAwareAction {
         if (!name.endsWith(".stan")) name = name + ".stan";
         final String fileName = name;
 
+        // Indent the empty line inside the first block and put the caret there.
+        CommonCodeStyleSettings.IndentOptions opts =
+                CodeStyle.getSettings(project).getIndentOptions(StanFileType.INSTANCE);
+        String indent = opts.USE_TAB_CHARACTER ? "\t" : " ".repeat(opts.INDENT_SIZE);
+        int lineStart = TEMPLATE.indexOf('\n', TEMPLATE.indexOf('{')) + 1;
+        String content = TEMPLATE.substring(0, lineStart) + indent + TEMPLATE.substring(lineStart);
+
         WriteCommandAction.runWriteCommandAction(project, "Create Stan File", null, () -> {
             try {
                 VirtualFile vFile = dir.getVirtualFile().createChildData(this, fileName);
-                vFile.setBinaryContent(TEMPLATE.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-
-                ApplicationManager.getApplication().invokeLater(() -> {
-                    Editor editor = FileEditorManager.getInstance(project)
-                            .openTextEditor(new OpenFileDescriptor(project, vFile), true);
-                    if (editor != null) {
-                        String text = editor.getDocument().getText();
-                        int brace = text.indexOf('{');
-                        if (brace >= 0) {
-                            int newline = text.indexOf('\n', brace);
-                            int target = (newline >= 0) ? newline + 1 : brace + 1;
-
-                            CommonCodeStyleSettings.IndentOptions opts =
-                                    CodeStyle.getSettings(project).getIndentOptions(StanFileType.INSTANCE);
-                            String indent = opts.USE_TAB_CHARACTER ? "\t" : " ".repeat(opts.INDENT_SIZE);
-
-                            WriteCommandAction.runWriteCommandAction(project, () ->
-                                    editor.getDocument().insertString(target, indent));
-                            editor.getCaretModel().moveToOffset(target + indent.length());
-                        }
-                    }
-                });
+                vFile.setBinaryContent(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                ApplicationManager.getApplication().invokeLater(() ->
+                        new OpenFileDescriptor(project, vFile, lineStart + indent.length()).navigate(true));
             } catch (java.io.IOException ex) {
                 Messages.showErrorDialog(project, ex.getMessage(), "Could Not Create File");
             }
