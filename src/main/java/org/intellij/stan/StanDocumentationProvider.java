@@ -148,9 +148,7 @@ public class StanDocumentationProvider extends AbstractDocumentationProvider {
      */
     private static @Nullable StanSignatureDatabase.Signature findMatchedSignature(
             PsiElement callToken, List<StanSignatureDatabase.Signature> sigs) {
-        PsiFile file = callToken.getContainingFile();
-        if (file == null) return null;
-        Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(file.getNode());
+        Map<String, String> typeMap = StanSignatureDatabase.typeMapAt(callToken.getNode());
         List<ASTNode> argNodes = StanSignatureDatabase.collectArgExprs(callToken.getParent().getNode());
         int argCount = argNodes.size();
         List<String> argTypes = new ArrayList<>(argCount);

@@ -24,14 +24,16 @@ public class StanTypeMismatchInspection extends LocalInspectionTool {
         return new PsiElementVisitor() {
             @Override
             public void visitFile(@NotNull PsiFile file) {
-                Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(file.getNode());
-                checkMismatches(file.getNode(), typeMap, holder);
+                checkMismatches(file.getNode(), Map.of(), holder);
             }
         };
     }
 
     private void checkMismatches(ASTNode node, Map<String, String> typeMap, ProblemsHolder holder) {
         IElementType t = node.getElementType();
+
+        if (t == StanElementTypes.FUN_DEF || StanElementTypes.BLOCK_TYPES.contains(t))
+            typeMap = StanSignatureDatabase.buildScopeTypeMap(node);
 
         if (t == StanElementTypes.VAR_DECL) {
             checkVarDeclInits(node, typeMap, holder);

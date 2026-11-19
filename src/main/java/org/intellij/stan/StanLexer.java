@@ -96,7 +96,7 @@ public class StanLexer extends LexerBase {
         for (String name : StanSignatureDatabase.getInstance().getDistributionFunctionNames()) {
             KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
-        for (String name : StanSignatureDatabase.DISTRIBUTION_BASE_NAMES) {
+        for (String name : StanSignatureDatabase.getInstance().getDistributionBaseNames()) {
             KEYWORD_MAP.putIfAbsent(name, StanTokenTypes.BUILTIN_FUNCTION);
         }
 

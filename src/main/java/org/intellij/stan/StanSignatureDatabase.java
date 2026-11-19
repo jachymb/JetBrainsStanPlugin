@@ -2,6 +2,7 @@ package org.intellij.stan;
 
 import com.intellij.lang.ASTNode;
 import com.intellij.psi.tree.IElementType;
+import com.intellij.psi.tree.TokenSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -47,49 +48,17 @@ public final class StanSignatureDatabase {
 
     // ── Singleton ─────────────────────────────────────────────────────────────
 
-    /**
-     * Distribution family base names — the bare stem used in tilde statements
-     * (e.g. {@code y ~ normal(mu, sigma)}).  Includes both names in the DB and
-     * deprecated legacy names that are not in the DB as full signatures.
-     */
-    public static final Set<String> DISTRIBUTION_BASE_NAMES = Collections.unmodifiableSet(
-            new HashSet<>(Arrays.asList(
-                "bernoulli", "bernoulli_logit", "bernoulli_logit_glm",
-                "beta", "beta_binomial", "beta_neg_binomial", "beta_proportion",
-                "binomial", "binomial_logit", "binomial_logit_glm",
-                "categorical", "categorical_logit", "categorical_logit_glm",
-                "cauchy", "chi_square",
-                "dirichlet", "dirichlet_multinomial", "discrete_range", "double_exponential",
-                "exp_mod_normal", "exponential",
-                "frechet", "gamma", "gaussian_dlm_obs",
-                "gumbel", "hmm_latent", "hypergeometric",
-                "inv_chi_square", "inv_gamma",
-                "inv_wishart", "inv_wishart_cholesky",
-                "lkj_corr", "lkj_corr_cholesky",
-                "logistic", "loglogistic", "lognormal",
-                "multinomial", "multinomial_logit",
-                "multi_gp", "multi_gp_cholesky",
-                "multi_normal", "multi_normal_cholesky", "multi_normal_prec",
-                "multi_student_t", "multi_student_t_cholesky",
-                "neg_binomial", "neg_binomial_2", "neg_binomial_2_log", "neg_binomial_2_log_glm",
-                "normal", "normal_id_glm",
-                "ordered_logistic", "ordered_logistic_glm", "ordered_probit",
-                "pareto", "pareto_type_2",
-                "poisson", "poisson_log", "poisson_log_glm",
-                "rayleigh", "scaled_inv_chi_square",
-                "skew_normal", "skew_double_exponential",
-                "std_normal", "student_t",
-                "uniform", "von_mises", "weibull", "wiener",
-                "wishart", "wishart_cholesky", "yule_simon",
-                "lkj_cov",
-                "integrate_ode", "integrate_ode_rk45", "integrate_ode_bdf", "integrate_ode_adams",
-                "get_lp", "increment_log_prob"
-            )));
+    /** Legacy names kept in {@link #getDistributionBaseNames()} although no _lpdf/_lpmf exists for them. */
+    private static final Set<String> LEGACY_DISTRIBUTION_BASE_NAMES = Set.of(
+            "hmm_latent",
+            "integrate_ode", "integrate_ode_rk45", "integrate_ode_bdf", "integrate_ode_adams",
+            "get_lp", "increment_log_prob");
 
     private static volatile StanSignatureDatabase INSTANCE;
 
     private final Map<String, List<Signature>> functions; // name → overloads
-    private final Set<String> distributionFunctions;     // names ending in _lpdf/_lpmf/_lcdf/_lccdf
+    private final Set<String> distributionFunctions;     // names ending in _lpdf/_lpmf/_lupdf/_lupmf
+    private final Set<String> distributionBaseNames;     // tilde-statement stems, e.g. "normal"
 
     public static StanSignatureDatabase getInstance() {
         if (INSTANCE == null) {
@@ -111,16 +80,21 @@ public final class StanSignatureDatabase {
         }
         functions = loaded;
         Set<String> dist = new HashSet<>();
+        Set<String> bases = new HashSet<>(LEGACY_DISTRIBUTION_BASE_NAMES);
         for (String name : functions.keySet()) {
-            if (name.endsWith("_lpdf")) {
+            if (name.endsWith("_lpdf") || name.endsWith("_lpmf")) {
                 dist.add(name);
-                dist.add(name.substring(0, name.length() - 5) + "_lupdf");
-            } else if (name.endsWith("_lpmf")) {
-                dist.add(name);
-                dist.add(name.substring(0, name.length() - 5) + "_lupmf");
+                dist.add(unnormalizedName(name));
+                bases.add(name.substring(0, name.length() - 5));
             }
         }
         distributionFunctions = Collections.unmodifiableSet(dist);
+        distributionBaseNames = Collections.unmodifiableSet(bases);
+    }
+
+    /** foo_lpdf → foo_lupdf, foo_lpmf → foo_lupmf; other names unchanged. */
+    private static String unnormalizedName(String name) {
+        return name.replaceFirst("_l(p[dm]f)$", "_lu$1");
     }
 
     // ── AST utilities (shared by inspections and completion) ─────────────────
@@ -154,7 +128,8 @@ public final class StanSignatureDatabase {
     }
 
     /**
-     * Collects the names of all user-defined functions in the given AST subtree.
+     * Collects the names of all user-defined functions in the given AST subtree, plus the
+     * _lupdf/_lupmf names under which user _lpdf/_lpmf functions can also be called.
      * Used by inspections and completion to distinguish user-defined from built-in functions.
      */
     public static @NotNull Set<String> collectUserDefinedFunctionNames(@NotNull ASTNode root) {
@@ -166,7 +141,10 @@ public final class StanSignatureDatabase {
     private static void collectUserDefinedFunctionNamesRec(ASTNode node, Set<String> names) {
         if (node.getElementType() == StanElementTypes.FUN_DEF) {
             ASTNode nameToken = funDefNameToken(node);
-            if (nameToken != null) names.add(nameToken.getText());
+            if (nameToken != null) {
+                names.add(nameToken.getText());
+                names.add(unnormalizedName(nameToken.getText()));
+            }
             return; // no nested function definitions in Stan
         }
         for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
@@ -181,6 +159,11 @@ public final class StanSignatureDatabase {
 
     public @NotNull Set<String> getDistributionFunctionNames() {
         return distributionFunctions;
+    }
+
+    /** Distribution stems usable in tilde statements ({@code y ~ normal(...)}), derived from the DB. */
+    public @NotNull Set<String> getDistributionBaseNames() {
+        return distributionBaseNames;
     }
 
     public @NotNull List<Signature> getSignatures(@NotNull String name) {
@@ -199,7 +182,7 @@ public final class StanSignatureDatabase {
     public boolean isBuiltinName(@NotNull String name) {
         return functions.containsKey(name)
                 || distributionFunctions.contains(name)
-                || DISTRIBUTION_BASE_NAMES.contains(name);
+                || distributionBaseNames.contains(name);
     }
 
     // ── JSON parser ───────────────────────────────────────────────────────────
@@ -439,29 +422,9 @@ public final class StanSignatureDatabase {
         }
 
         if (t == StanElementTypes.INDEXED_EXPR) {
-            // First child is the base expression; strip one indexing dimension per index.
-            ASTNode base = expr.getFirstChildNode();
-            String baseType = inferExprType(base, typeMap);
-            if (baseType == null) return null;
-            // Count indices: 1 + number of top-level COMMA tokens in INDEX_LIST.
-            int dims = 1;
-            for (ASTNode c = expr.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanElementTypes.INDEX_LIST) {
-                    for (ASTNode ic = c.getFirstChildNode(); ic != null; ic = ic.getTreeNext())
-                        if (ic.getElementType() == StanTokenTypes.COMMA) dims++;
-                    break;
-                }
-            }
-            String result = baseType;
-            for (int d = 0; d < dims; d++) {
-                if (result.startsWith("array["))                                 result = stripOneArrayDim(result);
-                else if ("matrix".equals(result))                                result = "row_vector";
-                else if ("complex_matrix".equals(result))                        result = "complex_row_vector";
-                else if ("vector".equals(result) || "row_vector".equals(result)) result = "real";
-                else if ("complex_vector".equals(result) || "complex_row_vector".equals(result)) result = "complex";
-                else return null;
-            }
-            return result;
+            String baseType = inferExprType(expr.getFirstChildNode(), typeMap);
+            ASTNode indexList = expr.findChildByType(StanElementTypes.INDEX_LIST);
+            return baseType == null || indexList == null ? null : applyIndices(baseType, indexList, typeMap);
         }
 
         if (t == StanElementTypes.FUN_CALL_EXPR || t == StanElementTypes.COND_DIST_EXPR) {
@@ -521,6 +484,48 @@ public final class StanSignatureDatabase {
         return null;
     }
 
+    private static final TokenSet MULTI_INDEXES = TokenSet.create(StanElementTypes.ALL_INDEX,
+            StanElementTypes.UPFROM_INDEX, StanElementTypes.DOWNFROM_INDEX, StanElementTypes.BETWEEN_INDEX);
+
+    /**
+     * Type of a {@code type} value indexed by {@code indexList}, or null when unknown.
+     * A single int index drops a dimension; a multi-index (':', a range, or array[] int) keeps it.
+     */
+    private static @Nullable String applyIndices(String type, ASTNode indexList, Map<String, String> typeMap) {
+        int keptArrayDims = 0;
+        boolean columnIndexPending = false; // matrix rows were multi-indexed; the next index selects columns
+        for (ASTNode idx = indexList.getFirstChildNode(); idx != null; idx = idx.getTreeNext()) {
+            boolean single;
+            if (idx.getElementType() == StanElementTypes.SINGLE_INDEX) {
+                String indexType = inferExprType(idx.getFirstChildNode(), typeMap);
+                if ("int".equals(indexType)) single = true;
+                else if ("array[] int".equals(indexType)) single = false;
+                else return null;
+            } else if (MULTI_INDEXES.contains(idx.getElementType())) {
+                single = false;
+            } else {
+                continue; // comma or whitespace
+            }
+
+            boolean complex = type.startsWith("complex");
+            if (type.startsWith("array[")) {
+                type = stripOneArrayDim(type);
+                if (!single) keptArrayDims++;
+            } else if (columnIndexPending) {
+                columnIndexPending = false;
+                if (single) type = complex ? "complex_vector" : "vector";
+            } else if (type.endsWith("matrix")) {
+                if (single) type = complex ? "complex_row_vector" : "row_vector";
+                else columnIndexPending = true;
+            } else if (type.endsWith("vector")) {
+                if (single) type = complex ? "complex" : "real";
+            } else {
+                return null; // scalars cannot be indexed
+            }
+        }
+        return keptArrayDims == 0 ? type : wrapArrayDims(type, keptArrayDims);
+    }
+
     /** Collect all expression nodes from the ARG_LIST children of a call node. */
     public static @NotNull List<ASTNode> collectArgExprs(@NotNull ASTNode callNode) {
         List<ASTNode> result = new ArrayList<>();
@@ -535,20 +540,41 @@ public final class StanSignatureDatabase {
         return result;
     }
 
+    private static final TokenSet GLOBAL_BLOCKS = TokenSet.create(StanElementTypes.DATA_BLOCK,
+            StanElementTypes.TRANSFORMED_DATA_BLOCK, StanElementTypes.PARAMETERS_BLOCK,
+            StanElementTypes.TRANSFORMED_PARAMETERS_BLOCK);
+
     /**
-     * Build a name → type-string map for all variables declared in the file.
-     * Covers VAR_DECL, ARG_DECL, and for-range loop variables.
+     * Name → type map (null type = unknown) of the variables visible inside {@code scope},
+     * a FUN_DEF or a top-level block. A function sees its parameters and locals; a block sees
+     * the preceding data/parameters blocks (Stan's waterfall) plus its own declarations.
+     * ponytail: flat per scope, so sibling local scopes reusing a name with different types
+     * collide; track nested scopes if that ever matters.
      */
-    public static @NotNull Map<String, String> buildTypeMap(@NotNull ASTNode root) {
+    public static @NotNull Map<String, String> buildScopeTypeMap(@NotNull ASTNode scope) {
         Map<String, String> map = new HashMap<>();
-        buildTypeMapRec(root, map);
+        if (scope.getElementType() != StanElementTypes.FUN_DEF) {
+            for (ASTNode b = scope.getTreeParent().getFirstChildNode(); b != scope; b = b.getTreeNext())
+                if (GLOBAL_BLOCKS.contains(b.getElementType())) buildTypeMapRec(b, map);
+        }
+        for (ASTNode c = scope.getFirstChildNode(); c != null; c = c.getTreeNext())
+            buildTypeMapRec(c, map);
         return map;
     }
 
+    /** {@link #buildScopeTypeMap} of the FUN_DEF or top-level block enclosing {@code node}. */
+    public static @NotNull Map<String, String> typeMapAt(@NotNull ASTNode node) {
+        for (ASTNode n = node; n != null; n = n.getTreeParent()) {
+            IElementType t = n.getElementType();
+            if (t == StanElementTypes.FUN_DEF || StanElementTypes.BLOCK_TYPES.contains(t))
+                return buildScopeTypeMap(n);
+        }
+        return new HashMap<>();
+    }
+
     /**
-     * Build a type map containing only the formal parameters of a single function definition.
-     * Used when type-checking calls inside a function body (function scope is isolated from
-     * the outer data/parameters blocks).
+     * Build a type map containing only the formal parameters of a single function definition
+     * (no body locals; see {@link #buildScopeTypeMap} for the full function scope).
      */
     public static @NotNull Map<String, String> buildFunctionParamMap(@NotNull ASTNode funDefNode) {
         Map<String, String> map = new HashMap<>();
@@ -598,14 +624,10 @@ public final class StanSignatureDatabase {
             processArgDecl(node, map);
             return; // no nested declarations inside ARG_DECL
 
-        } else if (t == StanElementTypes.FOR_RANGE_STMT) {
-            // loop variable is always int
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.IDENTIFIER) {
-                    map.put(c.getText(), "int");
-                    break;
-                }
-            }
+        } else if (t == StanElementTypes.FOR_RANGE_STMT || t == StanElementTypes.FOR_EACH_STMT) {
+            // range loop variable is always int; for-each element type is not inferred
+            ASTNode loopVar = node.findChildByType(StanTokenTypes.IDENTIFIER);
+            if (loopVar != null) map.put(loopVar.getText(), t == StanElementTypes.FOR_RANGE_STMT ? "int" : null);
         }
 
         for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())

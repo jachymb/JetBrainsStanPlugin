@@ -33,9 +33,8 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
             @Override
             public void visitFile(@NotNull PsiFile file) {
                 ASTNode root = file.getNode();
-                Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(root);
                 Set<String> userFunctions = StanSignatureDatabase.collectUserDefinedFunctionNames(root);
-                checkCalls(root, typeMap, userFunctions, holder);
+                checkCalls(root, Map.of(), userFunctions, holder);
             }
         };
     }
@@ -44,14 +43,8 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
                             Set<String> userFunctions, ProblemsHolder holder) {
         IElementType t = node.getElementType();
 
-        if (t == StanElementTypes.FUN_DEF) {
-            // Function bodies are isolated: they can only access their own parameters,
-            // not variables from data/parameters/model blocks.
-            Map<String, String> localMap = StanSignatureDatabase.buildFunctionParamMap(node);
-            for (ASTNode child = node.getFirstChildNode(); child != null; child = child.getTreeNext())
-                checkCalls(child, localMap, userFunctions, holder);
-            return;
-        }
+        if (t == StanElementTypes.FUN_DEF || StanElementTypes.BLOCK_TYPES.contains(t))
+            typeMap = StanSignatureDatabase.buildScopeTypeMap(node);
 
         // An IDENTIFIER inside VARIABLE_EXPR whose text is a known built-in (and not shadowed)
         // means the function name was written without a call — functions are not values in Stan.
@@ -136,7 +129,7 @@ public class StanFunctionCallInspection extends LocalInspectionTool {
         if (sigs.isEmpty()) {
             // Bare distribution names (e.g. "poisson", "normal") are lexed as BUILTIN_FUNCTION
             // so they highlight correctly in tilde statements, but they are not callable functions.
-            if (StanSignatureDatabase.DISTRIBUTION_BASE_NAMES.contains(fnName)) {
+            if (db.getDistributionBaseNames().contains(fnName)) {
                 holder.registerProblem(nameToken.getPsi(),
                         "'" + fnName + "' is a distribution name, not a callable function; " +
                         "use '" + fnName + "_lpdf', '" + fnName + "_lpmf', or a tilde statement",

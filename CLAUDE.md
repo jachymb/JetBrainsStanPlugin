@@ -104,30 +104,37 @@ Singleton loaded from `stan_signatures.json` at first access. Provides:
   `_lupdf`/`_lupmf` counterparts; used by the lexer to register builtins.
 - `isBuiltinName(name)` — true for any DB function, distribution suffix variant, or
   distribution family base name.
-- `DISTRIBUTION_BASE_NAMES` (static Set) — authoritative set of distribution family stems
-  (e.g. `"normal"`, `"poisson"`) used in tilde statements. Includes legacy names not in the DB.
+- `getDistributionBaseNames()` — distribution family stems (e.g. `"normal"`, `"poisson"`) used in
+  tilde statements, derived from every `_lpdf`/`_lpmf` in the DB plus a few legacy names.
   This is the source of truth for tilde-statement completions.
 
 **AST utilities (shared by inspections and completion):**
 - `funDefNameToken(funDef)` — the `IDENTIFIER` child before `LPAREN` in a `FUN_DEF` node.
 - `argDeclNameToken(argDecl)` — the `IDENTIFIER` that follows the type node in an `ARG_DECL`
   node (skips optional `DATA_KW`). Used by `processArgDecl` and `StanShadowingInspection`.
-- `collectUserDefinedFunctionNames(root)` — walks the AST and returns all `FUN_DEF` names.
-  Shared by `StanFunctionCallInspection` and any code that needs to distinguish user-defined
-  from built-in functions.
+- `collectUserDefinedFunctionNames(root)` — walks the AST and returns all `FUN_DEF` names, plus
+  the `_lupdf`/`_lupmf` aliases of user `_lpdf`/`_lpmf` functions. Shared by
+  `StanFunctionCallInspection`, `StanUndeclaredVariableInspection` (user function names are in
+  scope in every block, as higher-order arguments) and any code that needs to distinguish
+  user-defined from built-in functions.
 
 **Type map construction:**
-- `buildTypeMap(root)` — walks the whole file and builds `name → type-string` for all
-  `VAR_DECL`, `ARG_DECL`, and for-range loop variables. Skips `FUN_DEF` bodies entirely so
-  function parameter names do not bleed into the file-level map.
-- `buildFunctionParamMap(funDefNode)` — builds a type map containing only the formal parameters
-  of a single `FUN_DEF`. Used by inspections inside function bodies, so they only see the
-  function's own scope, not outer block variables.
+- `buildScopeTypeMap(scope)` — `name → type-string` for the variables visible inside a `FUN_DEF`
+  (its parameters and locals) or a top-level block (the preceding data/transformed
+  data/parameters/transformed parameters blocks plus its own declarations). Covers `VAR_DECL`,
+  `ARG_DECL`, for-range variables (`int`) and for-each variables (`null` = unknown type). Flat
+  within a scope: sibling local scopes reusing a name with different types collide.
+- `typeMapAt(node)` — `buildScopeTypeMap` of the `FUN_DEF` or block enclosing `node`. Used by
+  the annotator, documentation provider and completion.
+- `buildFunctionParamMap(funDefNode)` — only the formal parameters of a `FUN_DEF`; used by
+  `StanUndeclaredVariableInspection`, which declares body locals sequentially itself.
 
 **Type inference:**
 - `inferExprType(node, typeMap)` — lightweight type inference for an expression node. Handles
   literals, variables (via typeMap), parentheses, unary ops, binary ops (`common_type`),
-  `FUN_CALL_EXPR`, and `COND_DIST_EXPR`. Signature selection uses a two-pass strategy:
+  indexing, `FUN_CALL_EXPR`, and `COND_DIST_EXPR`. Indexing follows Stan: a single `int` index
+  drops a dimension, a multi-index (`:`, a range, or `array[] int`) keeps it; an index of
+  unknown type makes the whole expression unknown. Signature selection uses a two-pass strategy:
   exact-match first, then promotion-compatible, to avoid picking `(complex)→complex` over
   `(real)→real` for a real argument when the sorted DB has complex before real.
 - `typeNodeToString(node)` — converts a type AST node to a canonical type string
@@ -146,8 +153,8 @@ Type strings used throughout: `"int"`, `"real"`, `"complex"`, `"vector"`, `"row_
 **`StanSemanticHighlightAnnotator`** — per-element `Annotator` that fires on every
 `BUILTIN_FUNCTION` token in the file. If the name is present in the type map (i.e. shadowed by
 a local variable or parameter), it overrides the color to `IDENTIFIER` so the editor renders it
-as a plain name rather than a built-in. Calls `buildTypeMap` on every invocation — this is
-O(file-size) per token and has no caching. Acceptable for typical Stan files, but worth noting
+as a plain name rather than a built-in. Calls `typeMapAt` on every invocation — this is
+O(scope-size) per token and has no caching. Acceptable for typical Stan files, but worth noting
 if performance becomes an issue.
 
 **`StanReservedWordAnnotator`** — marks `RESERVED` tokens (C++ keywords used as Stan identifiers)
@@ -155,8 +162,8 @@ with error-level annotations.
 
 ### Inspections
 
-All registered in `plugin.xml`. Each that does type checking calls `buildTypeMap` (and/or
-`buildFunctionParamMap` inside function bodies) once per file, then walks the AST.
+All registered in `plugin.xml`. Each that does type checking walks the AST and switches to
+`buildScopeTypeMap(node)` on entering each `FUN_DEF` or top-level block.
 `collectUserDefinedFunctionNames` is used wherever the distinction between user-defined and
 built-in functions matters.
 
@@ -186,7 +193,7 @@ For `EXPR` positions, a `TypeConstraint` is computed from the surrounding contex
 
 Completions offered: type keywords, statement keywords, built-in functions (filtered by rng
 context and return type), user-defined functions (from `collectFunDefs`), and in-scope variables.
-After `~`, only distribution family base names from `DISTRIBUTION_BASE_NAMES` are offered.
+After `~`, only distribution family base names from `getDistributionBaseNames()` are offered.
 
 ### Folding — `StanFoldingBuilder.java`
 `FoldingBuilderEx` that creates fold regions for all top-level block types (`BLOCK_TYPES`),
@@ -196,6 +203,10 @@ of tiny regions on large files. Returns early (`EMPTY_ARRAY`) in quick mode.
 
 ### Signature database generator — `tools/generate_stan_signatures.py`
 Parses stanc3's `src/stan_math_signatures/Generate.ml` and writes `stan_signatures.json`.
+`List.iter` loops the regexes cannot follow are replicated by hand in the script. Functions that
+stanc3 typechecks by hand (variadic ODE/DAE/solvers, `reduce_sum`, embedded Laplace, read from
+`Generate.ml` and `Stan_math_signatures.ml`) are emitted with an empty signature list: they are
+recognised as built-ins, but arity and argument types are not checked.
 Re-run whenever stanc3 is updated: `python3 tools/generate_stan_signatures.py [path/to/stanc3/src]`
 Output: `{"v":1, "f":{"name": [[[arg,...], ret], ...]}}`.
 

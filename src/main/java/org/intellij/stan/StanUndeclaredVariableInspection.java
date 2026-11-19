@@ -67,8 +67,8 @@ public class StanUndeclaredVariableInspection extends LocalInspectionTool {
     // ── Program entry ─────────────────────────────────────────────────────────
 
     private void checkProgram(ASTNode root, ProblemsHolder holder) {
-        // Waterfall: each block's top-level variables become visible in subsequent blocks.
-        Set<String> accum = new HashSet<>();
+        // Waterfall scope; user function names are visible everywhere (higher-order arguments).
+        Set<String> accum = new HashSet<>(StanSignatureDatabase.collectUserDefinedFunctionNames(root));
 
         for (ASTNode block = root.getFirstChildNode(); block != null; block = block.getTreeNext()) {
             IElementType bt = block.getElementType();

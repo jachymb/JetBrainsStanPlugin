@@ -15,7 +15,6 @@ import com.intellij.util.ProcessingContext;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -173,7 +172,7 @@ public class StanCompletionContributor extends CompletionContributor {
                     }
                     if (isDataOrParams && isInConstraintValuePosition(position)) {
                         PsiFile file = position.getContainingFile();
-                        Map<String, String> typeMap = StanSignatureDatabase.buildTypeMap(file.getNode());
+                        Map<String, String> typeMap = StanSignatureDatabase.typeMapAt(position.getNode());
                         addExprCompletions(result, position, file, typeMap, NO_CONSTRAINT);
                         result.stopHere();
                         return;
@@ -441,47 +440,6 @@ public class StanCompletionContributor extends CompletionContributor {
     // ── Scope collection ──────────────────────────────────────────────────────
 
     /**
-     * Variable-name → type-string map for the scope at the cursor.
-     * Outside a FUN_DEF: all block-level declarations.
-     * Inside a FUN_DEF: function parameters + local declarations + for-loop variables.
-     */
-    private static Map<String, String> collectScopeVarMap(PsiFile file, @Nullable ASTNode funDef) {
-        if (funDef == null) return StanSignatureDatabase.buildTypeMap(file.getNode());
-        Map<String, String> map = new HashMap<>(StanSignatureDatabase.buildFunctionParamMap(funDef));
-        collectLocalVarTypes(funDef, map);
-        return map;
-    }
-
-    private static void collectLocalVarTypes(ASTNode node, Map<String, String> out) {
-        IElementType t = node.getElementType();
-        if (t == StanElementTypes.VAR_DECL) {
-            ASTNode typeNode = node.getFirstChildNode();
-            String typeStr = StanSignatureDatabase.typeNodeToString(typeNode);
-            if (typeStr != null) {
-                for (ASTNode c = typeNode.getTreeNext(); c != null; c = c.getTreeNext()) {
-                    if (c.getElementType() == StanElementTypes.DECLARED_VAR) {
-                        ASTNode name = c.getFirstChildNode();
-                        if (name != null && name.getElementType() == StanTokenTypes.IDENTIFIER)
-                            out.put(name.getText(), typeStr);
-                    }
-                }
-            }
-        } else if (t == StanElementTypes.FOR_RANGE_STMT) {
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.IN_KW) break;
-                if (c.getElementType() == StanTokenTypes.IDENTIFIER) { out.put(c.getText(), "int"); break; }
-            }
-        } else if (t == StanElementTypes.FOR_EACH_STMT) {
-            for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext()) {
-                if (c.getElementType() == StanTokenTypes.IN_KW) break;
-                if (c.getElementType() == StanTokenTypes.IDENTIFIER) { out.put(c.getText(), null); break; }
-            }
-        }
-        for (ASTNode c = node.getFirstChildNode(); c != null; c = c.getTreeNext())
-            collectLocalVarTypes(c, out);
-    }
-
-    /**
      * User-defined function name → return type string (null = void or unresolvable).
      * Return type is read from the FUN_DEF node: the first child before the function
      * name identifier, interpreted via {@code typeNodeToString}.
@@ -518,7 +476,7 @@ public class StanCompletionContributor extends CompletionContributor {
     }
 
     private static void addDistributionCompletions(CompletionResultSet result) {
-        for (String name : StanSignatureDatabase.DISTRIBUTION_BASE_NAMES)
+        for (String name : StanSignatureDatabase.getInstance().getDistributionBaseNames())
             addElementWithPriority(result, LookupElementBuilder.create(name));
     }
 
@@ -536,7 +494,7 @@ public class StanCompletionContributor extends CompletionContributor {
 
         if (kind == PositionKind.EXPR || kind == PositionKind.UNKNOWN) {
             PsiFile file = position.getContainingFile();
-            Map<String, String> typeMap = collectScopeVarMap(file, funDef);
+            Map<String, String> typeMap = StanSignatureDatabase.typeMapAt(position.getNode());
             TypeConstraint constraint = (kind == PositionKind.EXPR)
                     ? computeExpectedType(position, typeMap)
                     : NO_CONSTRAINT;

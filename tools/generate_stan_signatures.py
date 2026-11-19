@@ -436,15 +436,6 @@ def main():
     # batches of add_unqualified / add_qualified calls over type × depth
     # combinations.  The regex parsers above only handle static call sites;
     # these loops are replicated via expand_array_sigs().
-    #
-    # Functions still absent and why:
-    #   cholesky_factor_corr/cov/corr_matrix/cov_matrix/stochastic_*
-    #                      _constrain/jacobian/unconstrain
-    #     → internal constraint-transform helpers; not user-callable.
-    #   beta_proportion_rng (vector overloads), hypergeometric_3F2/pFq,
-    #   log_mix (vector overloads)
-    #     → iterate over vector_types or use for_all_vector_types helper
-    #       (not bare_types); scalar overloads come from the dist expander.
 
     B = BARE_TYPES  # shorthand; same list as the module-level constant
 
@@ -530,6 +521,46 @@ def main():
     _LAPLACE_TUPLE = [VEC, REAL, INT, INT, INT, INT]
     for _t in (INT, VEC):
         _add("generate_laplace_options", [_t], _LAPLACE_TUPLE)
+
+    # ── Hard-coded: List.iter loops over vector_types / all_vector_types / matrix types ──
+    _VECTOR_TYPES = [REAL, arr(REAL, 1), VEC, RVEC]
+    _ALL_VECTOR_TYPES = _VECTOR_TYPES + [INT, arr(INT, 1)]
+    _add("log_mix", [REAL, REAL, REAL], REAL)  # add_ternary
+    for _v1 in _VECTOR_TYPES[1:]:
+        for _v2 in _VECTOR_TYPES[1:] + [arr(VEC, 1), arr(RVEC, 1)]:
+            _add("log_mix", [_v1, _v2], REAL)
+    for _t1, _t2 in product(_VECTOR_TYPES[1:], repeat=2):
+        _add("hypergeometric_3F2", [_t1, _t2, REAL], REAL)
+        _add("hypergeometric_pFq", [_t1, _t2, REAL], REAL)
+    for _t, _u in product(_VECTOR_TYPES, _ALL_VECTOR_TYPES):
+        _add("beta_proportion_rng", [_t, _u], rng_return(REAL, [_t, _u]))
+    for _ts in product([MAT, CMAT], repeat=3):
+        _add("solve_sylvester", list(_ts), CMAT)
+    for _d in range(8):
+        _m, _v = arr(MAT, _d), arr(VEC, _d)
+        for _kind, _extra in (("corr_matrix", [INT]), ("cov_matrix", [INT]),
+                              ("cholesky_factor_corr", [INT]), ("cholesky_factor_cov", [INT, INT])):
+            _add(f"{_kind}_constrain", [_v] + _extra, _m)
+            _add(f"{_kind}_jacobian", [_v] + _extra, _m)
+            _add(f"{_kind}_unconstrain", [_m], _v)
+        for _kind in ("stochastic_column", "stochastic_row"):
+            for _sfx in ("constrain", "jacobian", "unconstrain"):
+                _add(f"{_kind}_{_sfx}", [_m], _m)
+
+    # ── Special functions stanc3 typechecks by hand (variadic ODE/DAE/solvers,
+    # reduce_sum, embedded Laplace). Emitted with no signatures: recognised as
+    # built-ins, arity and argument types unchecked.
+    sm_text = (STANC3_SRC / "stan_math_signatures" / "Stan_math_signatures.ml").read_text(encoding="utf-8")
+
+    def _quoted_between(src, start, end):
+        i = src.index(start)
+        return re.findall(r'"(\w+)"', re.sub(r'\(\*.*?\*\)', '', src[i:src.index(end, i)], flags=re.S))
+
+    for _name in (re.findall(r'add_variadic_fn\s+"(\w+)"', text)
+                  + _quoted_between(text, "let variadic_ode_adjoint_fn", "let ode_tolerances_suffix")
+                  + _quoted_between(sm_text, "let is_reduce_sum_fn", "let embedded_laplace_functions")
+                  + _quoted_between(sm_text, "let embedded_laplace_functions", "|> String.Set")):
+        sigs.setdefault(_name, set())
 
     # ── Serialise: name → list of [args_list, ret] ────────────────────────────
     # ret is a string (plain type or "void") or a list of strings (UTuple).
